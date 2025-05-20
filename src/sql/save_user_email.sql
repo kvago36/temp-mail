@@ -1,0 +1,1 @@
+INSERT INTO mailboxes (email) VALUES ($1) RETURNING *

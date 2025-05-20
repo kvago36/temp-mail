@@ -1,0 +1,23 @@
+syntax = "proto3";
+package mail;
+
+service MailProxy {
+    rpc SendMail (MailRequest) returns (MailResponse);
+}
+
+message MailRequest {
+    string domain = 1;
+    Mail mail = 2;
+}
+
+message Mail {
+   string subject = 1;
+   repeated string receivers = 2;
+   string sender = 3;
+   string message = 4;
+   int64 timestamp = 5;
+}
+
+message MailResponse {
+    bool is_success = 1;
+}

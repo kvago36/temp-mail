@@ -1,0 +1,1 @@
+SELECT * from messages WHERE mailbox_id = $1 LIMIT 50

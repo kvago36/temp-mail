@@ -2,7 +2,7 @@ use actix_web::{HttpResponse, Responder, get, web};
 use rand::prelude::*;
 use serde_json::json;
 use sqlx::{Executor, Row};
-use sqlx_postgres::{PgPool};
+use sqlx_postgres::PgPool;
 
 use chrono::{DateTime, Utc};
 use tokio::time::{Duration, sleep};
@@ -28,12 +28,7 @@ async fn get_messages(data: web::Data<PgPool>, path: web::Path<Uuid>) -> impl Re
         let sender: String = row.get("sender");
         let received_at: DateTime<Utc> = row.get("received_at");
 
-        messages.push(Mail::new(
-            subject,
-            sender,
-            message,
-            received_at.to_string(),
-        ));
+        messages.push(Mail::new(subject, sender, message, received_at.to_string()));
     }
 
     let json = json!({ "messages": messages });
@@ -77,9 +72,5 @@ async fn get_mail(data: web::Data<PgPool>) -> impl Responder {
 }
 
 pub fn mail_config(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/mail")
-            .service(get_messages)
-            .service(get_mail)
-    );
+    cfg.service(web::scope("/mail").service(get_messages).service(get_mail));
 }

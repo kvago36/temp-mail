@@ -1,64 +1,69 @@
-use actix_web::{App, HttpServer, web};
+use actix_cors::Cors;
+use actix_web::{App, HttpServer, http::header, web};
 use dotenv::dotenv;
 use rand::prelude::*;
-use sqlx::{Executor};
-use sqlx_postgres::{PgPool};
+use serde::{Deserialize, Serialize};
+use sqlx::Executor;
+use sqlx_postgres::PgPool;
 use std::env;
 use std::error::Error;
 use std::str::FromStr;
-use serde::{Deserialize, Serialize};
 use tonic::{Request, Response, Status, transport::Server};
+use simple_logger::SimpleLogger;
+use log::{info, warn, error, LevelFilter};
 
 use mail_test::mail_proxy_server::{MailProxy, MailProxyServer};
 use mail_test::{MailRequest, MailResponse};
 
 mod handlers;
 
-use handlers::{mail};
+use handlers::mail;
 
 pub mod mail_test {
     tonic::include_proto!("mail");
 }
 
-#[derive(Debug)]
-pub struct MyMailProxy {
-    connection: PgPool,
-}
+// #[derive(Debug)]
+// pub struct MyMailProxy {
+//     connection: PgPool,
+// }
+//
+// impl MyMailProxy {
+//     pub fn new(connection: PgPool) -> Self {
+//         Self { connection }
+//     }
+// }
 
-impl MyMailProxy {
-    pub fn new(connection: PgPool) -> Self {
-        Self { connection }
-    }
-}
-
-#[tonic::async_trait]
-impl MailProxy for MyMailProxy {
-    async fn send_mail(
-        &self,
-        request: Request<MailRequest>,
-    ) -> Result<Response<MailResponse>, Status> {
-        println!("Got a request: {:?}", request);
-        let pool = &self.connection;
-
-        let query = sqlx::query("INSERT INTO mail ( from, to ) VALUES ( ?, ? )")
-            .bind("from")
-            .bind("to");
-
-        let result = pool.execute(query).await.unwrap();
-
-        let response = if result.rows_affected() > 1 {
-            MailResponse { is_success: true }
-        } else {
-            MailResponse { is_success: false }
-        };
-
-        Ok(Response::new(response))
-    }
-}
+// #[tonic::async_trait]
+// impl MailProxy for MyMailProxy {
+//     async fn send_mail(
+//         &self,
+//         request: Request<MailRequest>,
+//     ) -> Result<Response<MailResponse>, Status> {
+//         println!("Got a request: {:?}", request);
+//         let pool = &self.connection;
+//
+//         let query = sqlx::query("INSERT INTO mail ( from, to ) VALUES ( ?, ? )")
+//             .bind("from")
+//             .bind("to");
+//
+//         let result = pool.execute(query).await.unwrap();
+//
+//         let response = if result.rows_affected() > 1 {
+//             MailResponse { is_success: true }
+//         } else {
+//             MailResponse { is_success: false }
+//         };
+//
+//         Ok(Response::new(response))
+//     }
+// }
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+
+    SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
 
     // let addr = "[::1]:50051".parse().unwrap();
     let db_url = env::var("DB_URL").expect("Cant find DB_URL in .env");
@@ -88,10 +93,15 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .app_data(app_state.clone())
-            .service(web::scope("/api")
-                 .configure(mail::mail::mail_config),
+            .wrap(
+                Cors::default()
+                    .allowed_origin("http://localhost:3000")
+                    .allowed_methods(vec!["GET"])
+                    .allowed_header(header::CONTENT_TYPE)
+                    .max_age(3600),
             )
+            .app_data(app_state.clone())
+            .service(web::scope("/api").configure(mail::mail::mail_config))
     })
     .bind(("127.0.0.1", 8000))?
     .run()

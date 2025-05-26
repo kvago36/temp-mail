@@ -1,5 +1,5 @@
-use std::fmt;
 use serde::Serialize;
+use std::fmt;
 
 #[derive(Serialize)]
 pub struct Mail {
@@ -15,18 +15,19 @@ pub struct Mail {
 pub enum MailboxStatus {
     New,
     Permanent,
+    Expired,
 }
 
 impl fmt::Display for MailboxStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match self {
             MailboxStatus::New => "new",
+            MailboxStatus::Expired => "expired",
             MailboxStatus::Permanent => "permanent",
         };
         write!(f, "{}", s)
     }
 }
-
 
 impl Mail {
     pub fn new(sender: String, subject: String, message: String, timestamp: String) -> Self {

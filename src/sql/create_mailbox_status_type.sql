@@ -1,1 +1,1 @@
-CREATE TYPE mailbox_status AS ENUM ('new', 'permanent');
+CREATE TYPE mailbox_status AS ENUM ('new', 'permanent', 'expired');

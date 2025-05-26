@@ -1,4 +1,5 @@
-use mailparse::*;
+use mailparse::parse_mail;
+use mailparse::{ParsedMail};
 
 use mail::email::Email;
 use mail::error::MyError;

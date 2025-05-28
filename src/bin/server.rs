@@ -1,16 +1,16 @@
 use actix_cors::Cors;
 use actix_web::{App, HttpServer, http::header, web};
 use dotenv::dotenv;
+use log::{LevelFilter, error, info, warn};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
+use simple_logger::SimpleLogger;
 use sqlx::Executor;
 use sqlx_postgres::PgPool;
 use std::env;
 use std::error::Error;
 use std::str::FromStr;
 use tonic::{Request, Response, Status, transport::Server};
-use simple_logger::SimpleLogger;
-use log::{info, warn, error, LevelFilter};
 
 use mail_test::mail_proxy_server::{MailProxy, MailProxyServer};
 use mail_test::{MailRequest, MailResponse};
@@ -63,7 +63,10 @@ pub mod mail_test {
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
-    SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
+    SimpleLogger::new()
+        .with_level(LevelFilter::Info)
+        .init()
+        .unwrap();
 
     // let addr = "[::1]:50051".parse().unwrap();
     let db_url = env::var("DB_URL").expect("Cant find DB_URL in .env");

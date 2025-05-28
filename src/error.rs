@@ -12,4 +12,6 @@ pub enum MyError {
     IncompleteData,
     #[error("Error while parsing string")]
     ParseError,
+    #[error("State error")]
+    StateError,
 }

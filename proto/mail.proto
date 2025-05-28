@@ -16,6 +16,8 @@ message Mail {
    string sender = 3;
    string message = 4;
    int64 timestamp = 5;
+   string body = 6;
+   repeated string attachments = 7;
 }
 
 message MailResponse {

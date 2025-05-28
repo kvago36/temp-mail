@@ -1,6 +1,8 @@
 use dotenv::dotenv;
+use log::{LevelFilter, error, info, warn};
 use mail_proto::mail_proxy_client::MailProxyClient;
 use mail_proto::{Mail, MailRequest};
+use simple_logger::SimpleLogger;
 use sqlx::{Executor, Row};
 use sqlx_postgres::PgPool;
 use std::env;
@@ -8,8 +10,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use log::{info, warn, error, LevelFilter};
-use simple_logger::SimpleLogger;
 
 pub mod mail_proto {
     tonic::include_proto!("mail");
@@ -27,8 +27,10 @@ use mail::error::MyError;
 async fn main() -> Result<(), MyError> {
     dotenv().ok();
 
-    SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
-
+    SimpleLogger::new()
+        .with_level(LevelFilter::Info)
+        .init()
+        .unwrap();
 
     let listener = TcpListener::bind("localhost:4000").await?;
 
@@ -107,7 +109,8 @@ async fn main() -> Result<(), MyError> {
                 let request = Request::from_bytes(&buf[..n]);
 
                 if let Ok(req) = request {
-                    state.handle_request(req).await;
+                    // TODO: Send proper error to client
+                    let _ = state.handle_request(req).await;
 
                     socket.write_all(b"250 Ok\r\n").await.unwrap();
                 } else {

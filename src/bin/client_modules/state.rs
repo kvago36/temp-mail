@@ -1,19 +1,21 @@
-use log::{debug, error, info};
+use chrono::{DateTime, Local};
+use log::{debug, error, info, warn};
 use mailparse::body::Body;
 use mailparse::{MailHeader, ParsedMail};
 use regex::Regex;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
-use chrono::{DateTime, Local};
+use std::path::{Path, PathBuf};
+use tokio::fs;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::Sender;
 
 use crate::mail_proto::{Mail, MailRequest};
 
+use crate::client_modules::request::Request;
 use mail::email::Email;
 use mail::error::MyError;
-use crate::client_modules::request::Request;
 
 pub struct Payload {
     subject: String,
@@ -22,6 +24,7 @@ pub struct Payload {
     attachments: Vec<String>,
     body: Option<String>,
     message: Option<String>,
+    timestamp: i64,
 }
 
 pub struct State {
@@ -53,7 +56,11 @@ impl State {
                 self.recipients.push(recipient);
             }
             Request::Data(mail) => {
-                // info!("Received data: {:?}", mail);
+                let now: DateTime<Local> = Local::now();
+
+                // DEBUG:
+                self.sender = Some(Email::new("test@test.com")?);
+
                 let mut p = Payload {
                     subject: "".to_string(),
                     from: self
@@ -64,9 +71,8 @@ impl State {
                     attachments: vec![],
                     body: None,
                     message: None,
+                    timestamp: now.timestamp(),
                 };
-
-                // let mut subject = String::new();
 
                 for header in mail.headers {
                     match header.get_key().as_str() {
@@ -92,30 +98,60 @@ impl State {
 
                             for part in mail.subparts.iter() {
                                 info!("{:?}", part.headers);
-                                // let headers = HashMap::<String, String>::new();
 
-                                let mut name = String::new();
+                                let re = Regex::new(r#"(?:name|filename)="([^"]+)"#).unwrap();
 
-                                for header in part.headers.iter() {
-                                    let values = header.get_value();
-                                    let re = Regex::new(r#"(?:name|filename)="([^"]+)"#).unwrap();
+                                let header_name = part.headers.iter().find_map(|h| {
+                                    let values = h.get_value();
 
                                     if let Some(caps) = re.captures(&values) {
                                         if let Some(filename) = caps.get(1) {
-                                            name = filename.as_str().to_string();
+                                            return Some(filename.as_str().to_string());
                                         }
-                                    }
-                                }
+                                    };
+
+                                    None
+                                });
 
                                 match part.get_body_encoded() {
                                     Body::Base64(body) => {
                                         let data = body.get_decoded().unwrap();
 
-                                        // TODO: fix if name changes
-                                        let mut file = File::create(name.clone()).await?;
-                                        file.write_all(&data).await?;
+                                        if let Some(filename) = header_name {
+                                            let mut path = PathBuf::from("tmp/attachments/");
 
-                                        p.attachments.push(name);
+                                            if let Ok(is_exist) = fs::try_exists(&path).await {
+                                                if !is_exist {
+                                                    fs::create_dir_all("tmp/attachments").await.map_err(|e| MyError::CreateDirError {
+                                                        path: path.to_str().unwrap().to_string(),
+                                                        source: e,
+                                                    })?
+                                                }
+                                            } else {
+                                                info!("Can't find path");
+                                            }
+
+                                            let new_folders = format!("{}/{}", p.timestamp.to_string(), p.from.to_string());
+
+                                            fs::create_dir_all(&path.join(new_folders)).await.map_err(|e| MyError::CreateDirError {
+                                                path: path.to_str().unwrap().to_string(),
+                                                source: e,
+                                            })?;
+
+                                            path.push(p.timestamp.to_string());
+                                            path.push(p.from.to_string());
+                                            path.push(filename.to_string());
+
+                                            let mut file = File::create(path).await.map_err(|e| MyError::CreateFileError {
+                                                filename: filename.clone(),
+                                                source: e,
+                                            })?;
+                                            file.write_all(&data).await?;
+
+                                            p.attachments.push(filename);
+                                        } else {
+                                            warn!("Got attachment without filename");
+                                        }
                                     }
                                     Body::QuotedPrintable(html) => {
                                         if let Ok(html) = html.get_decoded_as_string() {
@@ -139,16 +175,14 @@ impl State {
                     }
                 }
 
-                let now: DateTime<Local> = Local::now();
-
                 let m = Mail {
                     subject: p.subject,
-                    receivers: self
-                        .recipients
+                    receivers: p
+                        .to
                         .iter()
                         .map(|email| email.to_string())
                         .collect(),
-                    sender: self.sender.take().expect("Should have sender!").to_string(),
+                    sender: p.from.to_string(),
                     message: p.message.unwrap_or("".to_string()),
                     body: p.body.unwrap_or("".to_string()),
                     attachments: p.attachments,

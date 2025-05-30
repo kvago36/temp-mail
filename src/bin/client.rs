@@ -48,6 +48,8 @@ async fn main() -> Result<(), MyError> {
 
         while let Some(mail_request) = rx.recv().await {
             if let Some(mail) = mail_request.mail {
+                info!("{:?}", mail);
+
                 let receiver = mail
                     .receivers
                     .first()
@@ -110,7 +112,12 @@ async fn main() -> Result<(), MyError> {
 
                 if let Ok(req) = request {
                     // TODO: Send proper error to client
-                    let _ = state.handle_request(req).await;
+                    let result = state.handle_request(req).await;
+
+                    match result {
+                        Ok(_) => info!("Ok"),
+                        Err(e) => error!("{}", e)
+                    }
 
                     socket.write_all(b"250 Ok\r\n").await.unwrap();
                 } else {

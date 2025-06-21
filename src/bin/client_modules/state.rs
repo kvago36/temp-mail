@@ -127,8 +127,6 @@ impl State {
                                                         source: e,
                                                     })?
                                                 }
-                                            } else {
-                                                info!("Can't find path");
                                             }
 
                                             let new_folders = format!("{}/{}", p.timestamp.to_string(), p.from.to_string());
@@ -146,6 +144,7 @@ impl State {
                                                 filename: filename.clone(),
                                                 source: e,
                                             })?;
+
                                             file.write_all(&data).await?;
 
                                             p.attachments.push(filename);

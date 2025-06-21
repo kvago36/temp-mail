@@ -1,5 +1,6 @@
 use actix_cors::Cors;
-use actix_web::{App, HttpServer, http::header, web};
+use actix_web::{App, HttpServer, http::header, web, dev::Service as _, HttpMessage};
+use futures_util::future::FutureExt;
 use dotenv::dotenv;
 use log::{LevelFilter, error, info, warn};
 use rand::prelude::*;
@@ -10,54 +11,35 @@ use sqlx_postgres::PgPool;
 use std::env;
 use std::error::Error;
 use std::str::FromStr;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use actix_web::middleware::from_fn;
 use tonic::{Request, Response, Status, transport::Server};
+use uuid::Uuid;
+use tokio::sync::oneshot::{Receiver, Sender};
+use cookie::Cookie;
 
 use mail_test::mail_proxy_server::{MailProxy, MailProxyServer};
 use mail_test::{MailRequest, MailResponse};
 
+type ClientId = Uuid;
+type ChannelsMap = Arc<Mutex<HashMap<ClientId, Sender<usize>>>>;
+
+
 mod handlers;
+mod middlewares;
 
 use handlers::mail;
+use middlewares::my_middleware;
 
 pub mod mail_test {
     tonic::include_proto!("mail");
 }
 
-// #[derive(Debug)]
-// pub struct MyMailProxy {
-//     connection: PgPool,
-// }
-//
-// impl MyMailProxy {
-//     pub fn new(connection: PgPool) -> Self {
-//         Self { connection }
-//     }
-// }
-
-// #[tonic::async_trait]
-// impl MailProxy for MyMailProxy {
-//     async fn send_mail(
-//         &self,
-//         request: Request<MailRequest>,
-//     ) -> Result<Response<MailResponse>, Status> {
-//         println!("Got a request: {:?}", request);
-//         let pool = &self.connection;
-//
-//         let query = sqlx::query("INSERT INTO mail ( from, to ) VALUES ( ?, ? )")
-//             .bind("from")
-//             .bind("to");
-//
-//         let result = pool.execute(query).await.unwrap();
-//
-//         let response = if result.rows_affected() > 1 {
-//             MailResponse { is_success: true }
-//         } else {
-//             MailResponse { is_success: false }
-//         };
-//
-//         Ok(Response::new(response))
-//     }
-// }
+struct State {
+    pool: PgPool,
+    channels_map: ChannelsMap,
+}
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -84,7 +66,10 @@ async fn main() -> std::io::Result<()> {
     pool.execute(messages_table).await.unwrap();
     pool.execute(domains_table).await.unwrap();
 
-    let app_state = web::Data::new(pool);
+    let channels_map = Arc::new(Mutex::new(HashMap::new()));
+    let state = State { pool, channels_map };
+
+    let app_state = web::Data::new(state);
 
     // tokio::spawn(async move {
     //     Server::builder()
@@ -96,6 +81,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .wrap(from_fn(my_middleware::my_middleware))
             .wrap(
                 Cors::default()
                     .allowed_origin("http://localhost:3000")

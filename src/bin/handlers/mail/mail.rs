@@ -1,14 +1,18 @@
-use actix_web::{HttpResponse, Responder, get, web};
+use actix_web::{HttpResponse, Responder, get, web, HttpRequest};
+use actix_web::cookie::Cookie;
 use rand::prelude::*;
 use serde_json::json;
 use sqlx::{Executor, Row};
 use sqlx_postgres::PgPool;
 
 use chrono::{DateTime, Utc};
+use log::{error, info};
 use tokio::time::{Duration, sleep};
-use uuid::Uuid;
+use tokio::sync::oneshot;
+use uuid::{uuid, Uuid};
 
 use mail::models::{Mail, MailboxStatus};
+use crate::{ChannelsMap, ClientId, State};
 
 #[get("/{id}")]
 async fn get_messages(data: web::Data<PgPool>, path: web::Path<Uuid>) -> impl Responder {
@@ -34,6 +38,48 @@ async fn get_messages(data: web::Data<PgPool>, path: web::Path<Uuid>) -> impl Re
     let json = json!({ "messages": messages });
 
     HttpResponse::Ok().json(json)
+}
+
+#[get("/new")]
+async fn await_for_new_mail(data: web::Data<State>, req: HttpRequest) -> impl Responder {
+    let mut channels = data.channels_map.lock().unwrap();
+    let cookie = req.cookie("user_id");
+    let (tx, rx) = oneshot::channel();
+
+    match cookie {
+        None => {
+            unreachable!();
+        }
+        Some(c) => {
+            let id = c.value();
+            let uuid = Uuid::parse_str(id).unwrap();
+
+            channels.entry(uuid).or_insert_with(|| tx);
+        }
+    };
+
+    // TODO: CHANGE TIMEOUT AFTER TESTS
+    let sleep = sleep(Duration::from_secs(5));
+
+    drop(channels);
+
+    tokio::pin!(sleep);
+
+    tokio::select! {
+        _ = &mut sleep => {
+            info!("operation timed out");
+            HttpResponse::Ok().json(json!({ "status": "ok", "n": null }))
+        }
+        res = rx => {
+            if let Ok(n) = res {
+                info!("operation completed {}", n);
+                HttpResponse::Ok().json(json!({ "status": "ok", "n": n }))
+            } else {
+                error!("operation error");
+                HttpResponse::Ok().json(json!({ "status": "error", "n": null }))
+            }
+        }
+    }
 }
 
 #[get("/")]

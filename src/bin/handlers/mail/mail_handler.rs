@@ -1,22 +1,23 @@
-use actix_web::{HttpResponse, Responder, get, web, HttpRequest};
 use actix_web::cookie::Cookie;
+use actix_web::{HttpRequest, HttpResponse, Responder, get, post, web};
 use rand::prelude::*;
 use serde_json::json;
 use sqlx::{Executor, Row};
 use sqlx_postgres::PgPool;
 
 use chrono::{DateTime, Utc};
-use log::{error, info};
-use tokio::time::{Duration, sleep};
+use log::{error, info, warn};
 use tokio::sync::oneshot;
-use uuid::{uuid, Uuid};
+use tokio::time::{Duration, sleep};
+use uuid::{Uuid, uuid};
 
 use mail::models::{Mail, MailboxStatus};
+
 use crate::{ChannelsMap, ClientId, State};
 
 #[get("/{id}")]
-async fn get_messages(data: web::Data<PgPool>, path: web::Path<Uuid>) -> impl Responder {
-    let pool = data.get_ref();
+async fn get_messages(data: web::Data<State>, path: web::Path<Uuid>) -> impl Responder {
+    let pool = &data.pool;
     let id = path.into_inner();
     let mut messages: Vec<Mail> = vec![];
 
@@ -32,7 +33,16 @@ async fn get_messages(data: web::Data<PgPool>, path: web::Path<Uuid>) -> impl Re
         let sender: String = row.get("sender");
         let received_at: DateTime<Utc> = row.get("received_at");
 
-        messages.push(Mail::new(subject, sender, message, received_at.to_string()));
+        messages.push(Mail {
+            subject,
+            receivers: vec![],
+            sender,
+            message,
+            timestamp: received_at.timestamp(),
+            body: "test_body".to_string(),
+            attachments: vec![],
+            domain: "test".to_string(),
+        });
     }
 
     let json = json!({ "messages": messages });
@@ -40,10 +50,71 @@ async fn get_messages(data: web::Data<PgPool>, path: web::Path<Uuid>) -> impl Re
     HttpResponse::Ok().json(json)
 }
 
+#[post("/")]
+async fn new_message(
+    mail: web::Json<Mail>,
+    data: web::Data<State>,
+    req: HttpRequest,
+) -> impl Responder {
+    let mail = mail.into_inner();
+    let pool = &data.pool;
+
+    let receiver = mail
+        .receivers
+        .first()
+        .expect("should be at least one receiver");
+
+    let mailbox_query =
+        sqlx::query("SELECT * from mailboxes where email = $1 and status != 'expired'")
+            .bind(receiver)
+            .fetch_one(pool)
+            .await;
+
+    if let Ok(row) = mailbox_query {
+        let mailbox_id: Uuid = row.get("id");
+
+        let query = sqlx::query(
+            "INSERT INTO messages ( mailbox_id, sender, subject, body ) VALUES ( $1, $2, $3, $4 )",
+        )
+        .bind(mailbox_id)
+        .bind(&mail.sender)
+        .bind(&mail.subject)
+        .bind(&mail.message);
+
+        let result = pool.execute(query).await.unwrap();
+
+        if result.rows_affected() < 1 {
+            error!("Error while saving mail to mailbox: {}", mailbox_id);
+        } else {
+            info!("Saved message to mailbox: {}", mailbox_id);
+        }
+    } else {
+        warn!("No such email: {}", receiver)
+    }
+
+    // 1. save new message to db
+    // 2. send it over tx
+    let cookie = req.cookie("session_id");
+    let mut channels = data.channels_map.lock().unwrap();
+
+    if let Some(c) = cookie {
+        let id = c.value();
+        let uuid = Uuid::parse_str(id).unwrap();
+
+        if let Some(channel) = channels.remove(&uuid) {
+            if let Err(_) = channel.send(mail) {
+                error!("The receiver {} for mail dropped", uuid);
+            }
+        }
+    }
+
+    HttpResponse::Ok()
+}
+
 #[get("/new")]
 async fn await_for_new_mail(data: web::Data<State>, req: HttpRequest) -> impl Responder {
     let mut channels = data.channels_map.lock().unwrap();
-    let cookie = req.cookie("user_id");
+    let cookie = req.cookie("session_id");
     let (tx, rx) = oneshot::channel();
 
     match cookie {
@@ -72,10 +143,8 @@ async fn await_for_new_mail(data: web::Data<State>, req: HttpRequest) -> impl Re
         }
         res = rx => {
             if let Ok(n) = res {
-                info!("operation completed {}", n);
                 HttpResponse::Ok().json(json!({ "status": "ok", "n": n }))
             } else {
-                error!("operation error");
                 HttpResponse::Ok().json(json!({ "status": "error", "n": null }))
             }
         }
@@ -83,8 +152,8 @@ async fn await_for_new_mail(data: web::Data<State>, req: HttpRequest) -> impl Re
 }
 
 #[get("/")]
-async fn get_mail(data: web::Data<PgPool>) -> impl Responder {
-    let pool = data.get_ref();
+async fn get_mail(data: web::Data<State>) -> impl Responder {
+    let pool = &data.pool;
     let mut rng = thread_rng();
     let mut nums: Vec<i32> = (1..100).collect();
 
@@ -118,5 +187,10 @@ async fn get_mail(data: web::Data<PgPool>) -> impl Responder {
 }
 
 pub fn mail_config(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::scope("/mail").service(get_messages).service(get_mail));
+    cfg.service(
+        web::scope("/mail")
+            .service(await_for_new_mail)
+            .service(get_messages)
+            .service(get_mail),
+    );
 }

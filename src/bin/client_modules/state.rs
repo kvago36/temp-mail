@@ -3,6 +3,7 @@ use log::{debug, error, info, warn};
 use mailparse::body::Body;
 use mailparse::{MailHeader, ParsedMail};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -11,11 +12,11 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::Sender;
 
-use crate::mail_proto::{Mail, MailRequest};
-
 use crate::client_modules::request::Request;
+
 use mail::email::Email;
 use mail::error::MyError;
+use mail::models::Mail;
 
 pub struct Payload {
     subject: String,
@@ -29,177 +30,191 @@ pub struct Payload {
 
 pub struct State {
     domain: String,
+    data: bool,
     sender: Option<Email>,
     recipients: Vec<Email>,
-    channel: Sender<MailRequest>,
+    channel: Sender<Mail>,
 }
 
 impl State {
-    pub(crate) fn new(channel: Sender<MailRequest>) -> Self {
+    pub(crate) fn new(channel: Sender<Mail>) -> Self {
         State {
             channel,
             domain: "".to_owned(),
             sender: None,
+            data: false,
             recipients: vec![Email::new("email16@test.com").unwrap()],
         }
     }
 
-    pub(crate) async fn handle_request(&mut self, message: Request<'_>) -> Result<(), MyError> {
-        match message {
-            Request::Hello(domain) => {
-                self.domain = domain;
-            }
-            Request::Mail(sender) => {
-                self.sender = Some(sender);
-            }
-            Request::Recipient(recipient) => {
-                self.recipients.push(recipient);
-            }
-            Request::Data(mail) => {
-                let now: DateTime<Local> = Local::now();
+    pub(crate) fn add_recipient(&mut self, recipient: Email) {
+        self.recipients.push(recipient);
+    }
+    pub(crate) fn add_sender(&mut self, sender: Email) {
+        self.sender = Some(sender);
+    }
 
-                // DEBUG:
-                self.sender = Some(Email::new("test@test.com")?);
+    pub(crate) fn get_data(&mut self) -> bool {
+        self.data
+    }
 
-                let mut p = Payload {
-                    subject: "".to_string(),
-                    from: self
-                        .sender
-                        .take()
-                        .expect("Client should sent sender MAIL FROM"),
-                    to: self.recipients.drain(..).collect(),
-                    attachments: vec![],
-                    body: None,
-                    message: None,
-                    timestamp: now.timestamp(),
-                };
+    pub(crate) fn set_data(&mut self, data: bool) {
+        self.data = data;
+    }
 
-                for header in mail.headers {
-                    match header.get_key().as_str() {
-                        "From" => {
-                            let value = header.get_value();
-                            let from =
-                                Email::new(&value).expect("Could not parse From email address");
+    pub(crate) fn add_domain(&mut self, domain: String) {
+        self.domain = domain;
+    }
 
-                            p.from = from;
-                        }
-                        "To" => {
-                            let value = header.get_value();
+    pub(crate) fn reset(&mut self) {
+        self.data = false;
+        self.sender = None;
+        self.recipients.clear();
+    }
 
-                            let emails = value
-                                .split(',')
-                                .filter_map(|s| Email::new(s).ok())
-                                .collect::<Vec<_>>();
+    pub(crate) async fn handle_data(&mut self, mail: ParsedMail<'_>) -> Result<(), MyError> {
+        let now: DateTime<Local> = Local::now();
 
-                            p.to = emails;
-                        }
-                        "Content-Type" => {
-                            info!("{:?}", header.get_value());
+        // DEBUG:
+        self.sender = Some(Email::new("test@test.com")?);
 
-                            for part in mail.subparts.iter() {
-                                info!("{:?}", part.headers);
+        let mut p = Payload {
+            subject: "".to_string(),
+            from: self
+                .sender
+                .take()
+                .expect("Client should sent sender MAIL FROM"),
+            to: self.recipients.drain(..).collect(),
+            attachments: vec![],
+            body: None,
+            message: None,
+            timestamp: now.timestamp(),
+        };
 
-                                let re = Regex::new(r#"(?:name|filename)="([^"]+)"#).unwrap();
+        for header in mail.headers {
+            match header.get_key().as_str() {
+                "From" => {
+                    let value = header.get_value();
+                    let from = Email::new(&value).expect("Could not parse From email address");
 
-                                let header_name = part.headers.iter().find_map(|h| {
-                                    let values = h.get_value();
+                    p.from = from;
+                }
+                "To" => {
+                    let value = header.get_value();
 
-                                    if let Some(caps) = re.captures(&values) {
-                                        if let Some(filename) = caps.get(1) {
-                                            return Some(filename.as_str().to_string());
-                                        }
-                                    };
+                    let emails = value
+                        .split(',')
+                        .filter_map(|s| Email::new(s).ok())
+                        .collect::<Vec<_>>();
 
-                                    None
-                                });
+                    p.to = emails;
+                }
+                "Content-Type" => {
+                    info!("{:?}", header.get_value());
 
-                                match part.get_body_encoded() {
-                                    Body::Base64(body) => {
-                                        let data = body.get_decoded().unwrap();
+                    for part in mail.subparts.iter() {
+                        info!("{:?}", part.headers);
 
-                                        if let Some(filename) = header_name {
-                                            let mut path = PathBuf::from("tmp/attachments/");
+                        let re = Regex::new(r#"(?:name|filename)="([^"]+)"#).unwrap();
 
-                                            if let Ok(is_exist) = fs::try_exists(&path).await {
-                                                if !is_exist {
-                                                    fs::create_dir_all("tmp/attachments").await.map_err(|e| MyError::CreateDirError {
-                                                        path: path.to_str().unwrap().to_string(),
-                                                        source: e,
-                                                    })?
-                                                }
-                                            }
+                        let header_name = part.headers.iter().find_map(|h| {
+                            let values = h.get_value();
 
-                                            let new_folders = format!("{}/{}", p.timestamp.to_string(), p.from.to_string());
+                            if let Some(caps) = re.captures(&values) {
+                                if let Some(filename) = caps.get(1) {
+                                    return Some(filename.as_str().to_string());
+                                }
+                            };
 
-                                            fs::create_dir_all(&path.join(new_folders)).await.map_err(|e| MyError::CreateDirError {
-                                                path: path.to_str().unwrap().to_string(),
-                                                source: e,
-                                            })?;
+                            None
+                        });
 
-                                            path.push(p.timestamp.to_string());
-                                            path.push(p.from.to_string());
-                                            path.push(filename.to_string());
+                        match part.get_body_encoded() {
+                            Body::Base64(body) => {
+                                let data = body.get_decoded().unwrap();
 
-                                            let mut file = File::create(path).await.map_err(|e| MyError::CreateFileError {
-                                                filename: filename.clone(),
-                                                source: e,
-                                            })?;
+                                if let Some(filename) = header_name {
+                                    let mut path = PathBuf::from("tmp/attachments/");
 
-                                            file.write_all(&data).await?;
-
-                                            p.attachments.push(filename);
-                                        } else {
-                                            warn!("Got attachment without filename");
+                                    if let Ok(is_exist) = fs::try_exists(&path).await {
+                                        if !is_exist {
+                                            fs::create_dir_all("tmp/attachments").await.map_err(
+                                                |e| MyError::CreateDirError {
+                                                    path: path.to_str().unwrap().to_string(),
+                                                    source: e,
+                                                },
+                                            )?
                                         }
                                     }
-                                    Body::QuotedPrintable(html) => {
-                                        if let Ok(html) = html.get_decoded_as_string() {
-                                            p.body = Some(html.to_string());
+
+                                    let new_folders = format!(
+                                        "{}/{}",
+                                        p.timestamp.to_string(),
+                                        p.from.to_string()
+                                    );
+
+                                    fs::create_dir_all(&path.join(new_folders)).await.map_err(
+                                        |e| MyError::CreateDirError {
+                                            path: path.to_str().unwrap().to_string(),
+                                            source: e,
+                                        },
+                                    )?;
+
+                                    path.push(p.timestamp.to_string());
+                                    path.push(p.from.to_string());
+                                    path.push(filename.to_string());
+
+                                    let mut file = File::create(path).await.map_err(|e| {
+                                        MyError::CreateFileError {
+                                            filename: filename.clone(),
+                                            source: e,
                                         }
-                                    }
-                                    Body::SevenBit(text) => {
-                                        if let Ok(text) = text.get_as_string() {
-                                            p.message = Some(text);
-                                        }
-                                    }
-                                    Body::EightBit(_) => {}
-                                    Body::Binary(_) => {}
+                                    })?;
+
+                                    file.write_all(&data).await?;
+
+                                    p.attachments.push(filename);
+                                } else {
+                                    warn!("Got attachment without filename");
                                 }
                             }
+                            Body::QuotedPrintable(html) => {
+                                if let Ok(html) = html.get_decoded_as_string() {
+                                    p.body = Some(html.to_string());
+                                }
+                            }
+                            Body::SevenBit(text) => {
+                                if let Ok(text) = text.get_as_string() {
+                                    p.message = Some(text);
+                                }
+                            }
+                            Body::EightBit(_) => {}
+                            Body::Binary(_) => {}
                         }
-                        "Subject" => {
-                            p.subject = header.get_value();
-                        }
-                        _ => error!("Unrecognized header: {}", header.get_key()),
                     }
                 }
-
-                let m = Mail {
-                    subject: p.subject,
-                    receivers: p
-                        .to
-                        .iter()
-                        .map(|email| email.to_string())
-                        .collect(),
-                    sender: p.from.to_string(),
-                    message: p.message.unwrap_or("".to_string()),
-                    body: p.body.unwrap_or("".to_string()),
-                    attachments: p.attachments,
-                    timestamp: now.timestamp(),
-                };
-
-                let mail_request = MailRequest {
-                    domain: self.domain.clone(),
-                    mail: Some(m),
-                };
-
-                self.domain = "".to_owned();
-
-                self.channel.send(mail_request).await.unwrap();
-                info!("Send mail to channel");
+                "Subject" => {
+                    p.subject = header.get_value();
+                }
+                _ => error!("Unrecognized header: {}", header.get_key()),
             }
-            Request::Quit => {}
         }
+
+        let m = Mail {
+            subject: p.subject,
+            receivers: p.to.iter().map(|email| email.to_string()).collect(),
+            sender: p.from.to_string(),
+            message: p.message.unwrap_or("".to_string()),
+            body: p.body.unwrap_or("".to_string()),
+            attachments: p.attachments,
+            timestamp: now.timestamp(),
+            domain: self.domain.clone(),
+        };
+
+        self.domain = "".to_owned();
+
+        self.channel.send(m).await.unwrap();
+        info!("Send mail to channel");
 
         Ok(())
     }

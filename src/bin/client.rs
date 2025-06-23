@@ -1,27 +1,24 @@
 use dotenv::dotenv;
 use log::{LevelFilter, error, info, warn};
-use mail_proto::mail_proxy_client::MailProxyClient;
-use mail_proto::{Mail, MailRequest};
+use reqwest;
+use serde_json::json;
 use simple_logger::SimpleLogger;
 use sqlx::{Executor, Row};
 use sqlx_postgres::PgPool;
 use std::env;
+use mailparse::parse_mail;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-
-pub mod mail_proto {
-    tonic::include_proto!("mail");
-}
 
 mod client_modules;
 
 use client_modules::request::Request;
 use client_modules::state::State;
 
-use crate::mail_proto::MailResponse;
 use mail::error::MyError;
+use mail::models::Mail;
 
 #[tokio::main]
 async fn main() -> Result<(), MyError> {
@@ -34,56 +31,24 @@ async fn main() -> Result<(), MyError> {
 
     let listener = TcpListener::bind("localhost:4000").await?;
 
-    // let addr = "[::1]:50051".parse().unwrap();
-    let db_url = env::var("DB_URL").expect("Cant find DB_URL in .env");
-
-    let pool = PgPool::connect(&db_url).await.unwrap();
-
-    let (tx, mut rx) = mpsc::channel::<MailRequest>(32);
+    let (tx, mut rx) = mpsc::channel::<Mail>(32);
 
     tokio::spawn(async move {
-        // let mut client = MailProxyClient::connect("http://[::1]:50051")
-        //     .await
-        //     .unwrap();
+        let client = reqwest::Client::new();
 
-        while let Some(mail_request) = rx.recv().await {
-            if let Some(mail) = mail_request.mail {
-                info!("{:?}", mail);
+        while let Some(mail) = rx.recv().await {
+            info!("{:?}", mail);
 
-                let receiver = mail
-                    .receivers
-                    .first()
-                    .expect("should be at least one receiver");
+            let res = client
+                .post("http://localhost:8000/api/mail")
+                .json(&mail)
+                .send()
+                .await;
 
-                let mailbox_query =
-                    sqlx::query("SELECT * from mailboxes where email = $1 and status != 'expired'")
-                        .bind(receiver)
-                        .fetch_one(&pool)
-                        .await;
-
-                if let Ok(row) = mailbox_query {
-                    let mailbox_id: Uuid = row.get("id");
-
-                    let query =
-                        sqlx::query("INSERT INTO messages ( mailbox_id, sender, subject, body ) VALUES ( $1, $2, $3, $4 )")
-                            .bind(mailbox_id)
-                            .bind(mail.sender)
-                            .bind(mail.subject)
-                            .bind(mail.message);
-
-                    let result = pool.execute(query).await.unwrap();
-
-                    if result.rows_affected() < 1 {
-                        error!("Error");
-                    } else {
-                        info!("Success");
-                    }
-                } else {
-                    warn!("Cant find email: {}", receiver)
-                }
+            if let Err(_) = res {
+                // TODO store somewhere and send it after success
+                error!("Failed to send mail to server");
             }
-
-            // client.send_mail(mail).await.unwrap();
         }
     });
 
@@ -108,20 +73,68 @@ async fn main() -> Result<(), MyError> {
                     break;
                 }
 
-                let request = Request::from_bytes(&buf[..n]);
+                info!("Bytes read from socket{}", n);
 
-                if let Ok(req) = request {
-                    // TODO: Send proper error to client
-                    let result = state.handle_request(req).await;
-
-                    match result {
-                        Ok(_) => info!("Ok"),
-                        Err(e) => error!("{}", e)
+                let request = if state.get_data() {
+                    match parse_mail(&buf) {
+                        Ok(parsed) => Ok(Request::Payload(parsed)),
+                        Err(_) => Err(MyError::ParseError),
                     }
-
-                    socket.write_all(b"250 Ok\r\n").await.unwrap();
                 } else {
-                    socket.write_all(b"500 Ok\r\n").await.unwrap();
+                    Request::from_bytes(&buf[..n])
+                };
+
+                // info!("Request: {:?}", request.);
+
+                match request {
+                    Ok(r) => {
+                        match r {
+                            Request::Hello(domain) => {
+                                state.add_domain(domain);
+                                socket.write_all(b"250 Ok\r\n").await.unwrap();
+                            }
+                            Request::Mail(sender) => {
+                                state.add_sender(sender);
+                                socket.write_all(b"250 Ok\r\n").await.unwrap();
+                            }
+                            Request::Reset => {
+                                state.reset();
+                                socket.write_all(b"250 Ok\r\n").await.unwrap();
+                            }
+                            Request::Recipient(recipient) => {
+                                state.add_recipient(recipient);
+                                socket.write_all(b"250 Ok\r\n").await.unwrap();
+                            }
+                            Request::Data => {
+                                state.set_data(true);
+                                socket
+                                    .write_all(b"354 End data with <CR><LF>.<CR><LF>\r\n")
+                                    .await
+                                    .unwrap();
+                            }
+                            Request::Payload(mail) => {
+                                let result = state.handle_data(mail).await;
+
+                                match result {
+                                    Ok(_) => {
+                                        info!("Payload handled successfully");
+                                        state.set_data(false);
+                                        socket.write_all(b"250 Ok\r\n").await.unwrap();
+                                    },
+                                    Err(e) => {
+                                        error!("Error while in payload message {}", e);
+
+                                    },
+                                }
+                            }
+                            Request::Quit => {
+                                socket.write_all(b"221 Bye\r\n").await.unwrap();
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        socket.write_all(b"500 Ok\r\n").await.unwrap();
+                    }
                 }
             }
         });

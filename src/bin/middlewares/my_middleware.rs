@@ -1,12 +1,12 @@
 use actix_web::{
-    body::MessageBody,
-    cookie::{Cookie},
-    dev::{ServiceRequest, ServiceResponse},
-    middleware::{from_fn, Next},
     App, Error,
+    body::MessageBody,
+    cookie::Cookie,
+    dev::{ServiceRequest, ServiceResponse},
+    middleware::{Next, from_fn},
 };
-use uuid::Uuid;
 use log::info;
+use uuid::Uuid;
 
 pub(crate) async fn my_middleware(
     req: ServiceRequest,

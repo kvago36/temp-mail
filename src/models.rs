@@ -1,12 +1,16 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Mail {
-    sender: String,
-    subject: String,
-    message: String,
-    timestamp: String,
+    pub subject: String,
+    pub receivers: Vec<String>,
+    pub sender: String,
+    pub message: String,
+    pub timestamp: i64,
+    pub body: String,
+    pub attachments: Vec<String>,
+    pub domain: String,
 }
 
 #[derive(sqlx::Type)]
@@ -26,16 +30,5 @@ impl fmt::Display for MailboxStatus {
             MailboxStatus::Permanent => "permanent",
         };
         write!(f, "{}", s)
-    }
-}
-
-impl Mail {
-    pub fn new(sender: String, subject: String, message: String, timestamp: String) -> Self {
-        Mail {
-            sender,
-            subject,
-            message,
-            timestamp,
-        }
     }
 }

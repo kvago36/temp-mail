@@ -1,19 +1,27 @@
+use actix_session::Session;
 use actix_web::cookie::Cookie;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, post, web};
 use rand::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{Executor, Row};
 use sqlx_postgres::PgPool;
-
 use chrono::{DateTime, Utc};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use tokio::sync::oneshot;
 use tokio::time::{Duration, sleep};
 use uuid::{Uuid, uuid};
 
 use mail::models::{Mail, MailboxStatus};
 
-use crate::{ChannelsMap, ClientId, State};
+use crate::{ChannelsMap, MailId, State};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserSession {
+    pub mail_id: Uuid,
+    pub email: String,
+    pub created_ad: i64,
+}
 
 #[get("/{id}")]
 async fn get_messages(data: web::Data<State>, path: web::Path<Uuid>) -> impl Responder {
@@ -54,7 +62,6 @@ async fn get_messages(data: web::Data<State>, path: web::Path<Uuid>) -> impl Res
 async fn new_message(
     mail: web::Json<Mail>,
     data: web::Data<State>,
-    req: HttpRequest,
 ) -> impl Responder {
     let mail = mail.into_inner();
     let pool = &data.pool;
@@ -86,73 +93,88 @@ async fn new_message(
         if result.rows_affected() < 1 {
             error!("Error while saving mail to mailbox: {}", mailbox_id);
         } else {
-            info!("Saved message to mailbox: {}", mailbox_id);
+            let mut channels = data.channels_map.lock().unwrap();
+
+            if let Some(channel) = channels.remove(&mailbox_id) {
+                if let Err(_) = channel.send(mail) {
+                    error!("The receiver for mail: {} dropped", mailbox_id);
+                } else {
+                    info!("Message sent to mail {}", mailbox_id);
+                }
+            }
+
+            info!("Message saved to mailbox: {}", mailbox_id);
         }
     } else {
         warn!("No such email: {}", receiver)
-    }
-
-    // 1. save new message to db
-    // 2. send it over tx
-    let cookie = req.cookie("session_id");
-    let mut channels = data.channels_map.lock().unwrap();
-
-    if let Some(c) = cookie {
-        let id = c.value();
-        let uuid = Uuid::parse_str(id).unwrap();
-
-        if let Some(channel) = channels.remove(&uuid) {
-            if let Err(_) = channel.send(mail) {
-                error!("The receiver {} for mail dropped", uuid);
-            }
-        }
     }
 
     HttpResponse::Ok()
 }
 
 #[get("/new")]
-async fn await_for_new_mail(data: web::Data<State>, req: HttpRequest) -> impl Responder {
+async fn await_for_new_mail(session: Session, data: web::Data<State>) -> impl Responder {
     let mut channels = data.channels_map.lock().unwrap();
-    let cookie = req.cookie("session_id");
     let (tx, rx) = oneshot::channel();
 
-    match cookie {
-        None => {
-            unreachable!();
-        }
-        Some(c) => {
-            let id = c.value();
-            let uuid = Uuid::parse_str(id).unwrap();
+    match session.get::<UserSession>("user") {
+        Ok(s) => {
+            if let Some(user_session) = s {
+                // TODO: CHANGE TIMEOUT AFTER TESTS
+                let sleep = sleep(Duration::from_secs(60));
+                let mail_id = user_session.mail_id;
 
-            channels.entry(uuid).or_insert_with(|| tx);
-        }
-    };
+                channels.insert(mail_id, tx);
 
-    // TODO: CHANGE TIMEOUT AFTER TESTS
-    let sleep = sleep(Duration::from_secs(5));
+                drop(channels);
 
-    drop(channels);
+                tokio::pin!(sleep);
 
-    tokio::pin!(sleep);
-
-    tokio::select! {
-        _ = &mut sleep => {
-            info!("operation timed out");
-            HttpResponse::Ok().json(json!({ "status": "ok", "n": null }))
-        }
-        res = rx => {
-            if let Ok(n) = res {
-                HttpResponse::Ok().json(json!({ "status": "ok", "n": n }))
+                tokio::select! {
+                    _ = &mut sleep => {
+                        HttpResponse::RequestTimeout().json(json!({
+                            "status": "ok",
+                            "mail": null,
+                            "message": "Operation timed out"
+                        }))
+                    }
+                    res = rx => {
+                        match res {
+                            Ok(mail) => {
+                                HttpResponse::Ok().json(json!({
+                                    "status": "ok",
+                                    "mail": mail,
+                                }))
+                            },
+                            Err(e) => {
+                                error!("{}", e);
+                                HttpResponse::InternalServerError().json(json!({
+                                    "status": "error",
+                                    "mail": null,
+                                    "message": "Cant receive new message"
+                                }))
+                            }
+                        }
+                    }
+                }
             } else {
-                HttpResponse::Ok().json(json!({ "status": "error", "n": null }))
+                HttpResponse::Unauthorized().json(json!({
+                    "status": "error",
+                    "mail": null,
+                    "message": "Get user session failed"
+                }))
             }
         }
+        Err(_) => HttpResponse::ServiceUnavailable().json(json!({
+            "status": "error",
+            "mail": null,
+            "message": "User session storage isn't responding"
+        })),
     }
 }
 
 #[get("/")]
-async fn get_mail(data: web::Data<State>) -> impl Responder {
+async fn get_mail(session: Session, data: web::Data<State>) -> impl Responder {
     let pool = &data.pool;
     let mut rng = thread_rng();
     let mut nums: Vec<i32> = (1..100).collect();
@@ -176,19 +198,30 @@ async fn get_mail(data: web::Data<State>) -> impl Responder {
         .await
         .unwrap();
 
-    let id: Uuid = mail_query.get("id");
+    let mail_id: Uuid = mail_query.get("id");
     let mail_status: MailboxStatus = mail_query.get("status");
-    let user_json = json!({ "id": id, "email": random_email, "status": mail_status.to_string() });
+    let mail_json = json!({ "id": mail_id, "email": random_email, "status": mail_status.to_string() });
+
+    let user_session = UserSession {
+        mail_id,
+        email: random_email,
+        created_ad: Utc::now().timestamp(),
+    };
+
+    session
+        .insert("user", user_session)
+        .expect("Cant serialize userSession");
 
     // TODO: fix error on status type
     // println!("{:?}", mail_query);
 
-    HttpResponse::Ok().json(user_json)
+    HttpResponse::Ok().json(mail_json)
 }
 
 pub fn mail_config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/mail")
+            .service(new_message)
             .service(await_for_new_mail)
             .service(get_messages)
             .service(get_mail),

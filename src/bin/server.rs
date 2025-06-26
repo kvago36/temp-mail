@@ -1,6 +1,6 @@
 use actix_cors::Cors;
-use actix_web::middleware::from_fn;
-use actix_web::{App, HttpMessage, HttpServer, dev::Service as _, http::header, web};
+use actix_session::{SessionMiddleware, storage::RedisSessionStore};
+use actix_web::{App, HttpMessage, HttpServer, cookie::Key, dev::Service as _, http::header, web};
 use dotenv::dotenv;
 use futures_util::future::FutureExt;
 use log::LevelFilter;
@@ -17,15 +17,14 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot::Sender;
 use uuid::Uuid;
 
-type ClientId = Uuid;
-type ChannelsMap = Arc<Mutex<HashMap<ClientId, Sender<Mail>>>>;
+type MailId = Uuid;
+
+type ChannelsMap = Arc<Mutex<HashMap<MailId, Sender<Mail>>>>;
 
 mod handlers;
-mod middlewares;
 
 use handlers::mail::mail_handler;
 use mail::models::Mail;
-use middlewares::my_middleware;
 
 struct State {
     pool: PgPool,
@@ -42,6 +41,12 @@ async fn main() -> std::io::Result<()> {
         .unwrap();
 
     let db_url = env::var("DB_URL").expect("Cant find DB_URL in .env");
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+
+    // Create Redis session store
+    let redis_store = RedisSessionStore::new(redis_url)
+        .await
+        .expect("Failed to create Redis session store");
 
     let pool = PgPool::connect(&db_url).await.unwrap();
 
@@ -55,6 +60,9 @@ async fn main() -> std::io::Result<()> {
     pool.execute(messages_table).await.unwrap();
     pool.execute(domains_table).await.unwrap();
 
+    // Secret key for session encryption
+    let secret_key = Key::generate();
+
     let channels_map = Arc::new(Mutex::new(HashMap::new()));
     let state = State { pool, channels_map };
 
@@ -62,13 +70,17 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .wrap(from_fn(my_middleware::my_middleware))
             .wrap(
                 Cors::default()
-                    .allowed_origin("http://localhost:3000")
+                    .allowed_origin("http://localhost:5173")
                     .allowed_methods(vec!["GET"])
                     .allowed_header(header::CONTENT_TYPE)
                     .max_age(3600),
+            )
+            .wrap(
+                SessionMiddleware::builder(redis_store.clone(), secret_key.clone())
+                    .cookie_secure(false) // Set to true in production
+                    .build(),
             )
             .app_data(app_state.clone())
             .service(web::scope("/api").configure(mail_handler::mail_config))

@@ -6,8 +6,8 @@ import base64
 # === Настройки ===
 SMTP_SERVER = "localhost"
 SMTP_PORT = 4000
-SENDER = "sender@example.com"
-RECIPIENT = "email16@test.com"
+SENDER = "test@example.com"
+RECIPIENT = "email15@test.com"
 
 # === HTML с inline-изображением по cid ===
 image_cid = make_msgid(domain="example.com")[1:-1]  # без < >
@@ -32,7 +32,7 @@ html = f"""
 
 # === Создание письма ===
 msg = EmailMessage()
-msg["Subject"] = "Email with Attachment"
+msg["Subject"] = "Email"
 msg["From"] = SENDER
 msg["To"] = RECIPIENT
 msg.set_content("Ваш email-клиент не поддерживает HTML.")

@@ -7,7 +7,7 @@ import base64
 SMTP_SERVER = "localhost"
 SMTP_PORT = 4000
 SENDER = "test@example.com"
-RECIPIENT = "email15@test.com"
+RECIPIENT = "email22@test.com"
 
 # === HTML с inline-изображением по cid ===
 image_cid = make_msgid(domain="example.com")[1:-1]  # без < >

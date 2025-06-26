@@ -201,6 +201,7 @@ impl State {
         }
 
         let m = Mail {
+            id: "".to_string(),
             subject: p.subject,
             receivers: p.to.iter().map(|email| email.to_string()).collect(),
             sender: p.from.to_string(),

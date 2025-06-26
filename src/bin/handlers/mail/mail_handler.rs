@@ -24,38 +24,47 @@ pub struct UserSession {
 }
 
 #[get("/{id}")]
-async fn get_messages(data: web::Data<State>, path: web::Path<Uuid>) -> impl Responder {
+async fn get_messages(session: Session, data: web::Data<State>, path: web::Path<MailId>) -> impl Responder {
     let pool = &data.pool;
     let id = path.into_inner();
     let mut messages: Vec<Mail> = vec![];
 
-    let rows = sqlx::query(include_str!("../../../sql/get_messages.sql"))
-        .bind(&id)
-        .fetch_all(pool)
-        .await
-        .unwrap();
+    match session.get::<UserSession>("user") {
+        Ok(Some(user_session)) if user_session.mail_id == id => {
+            let rows = sqlx::query(include_str!("../../../sql/get_messages.sql"))
+                .bind(&id)
+                .fetch_all(pool)
+                .await
+                .unwrap();
 
-    for row in &rows {
-        let subject: String = row.get("subject");
-        let message: String = row.get("body");
-        let sender: String = row.get("sender");
-        let received_at: DateTime<Utc> = row.get("received_at");
+            for row in &rows {
+                let id: Uuid = row.get("id");
+                let subject: String = row.get("subject");
+                let message: String = row.get("body");
+                let sender: String = row.get("sender");
+                let received_at: DateTime<Utc> = row.get("received_at");
 
-        messages.push(Mail {
-            subject,
-            receivers: vec![],
-            sender,
-            message,
-            timestamp: received_at.timestamp(),
-            body: "test_body".to_string(),
-            attachments: vec![],
-            domain: "test".to_string(),
-        });
+                messages.push(Mail {
+                    id: id.to_string(),
+                    subject,
+                    receivers: vec![],
+                    sender,
+                    message,
+                    timestamp: received_at.timestamp(),
+                    body: "test_body".to_string(),
+                    attachments: vec![],
+                    domain: "test".to_string(),
+                });
+            }
+
+            let json = json!({ "messages": messages });
+
+            HttpResponse::Ok().json(json)
+        },
+        _ => {
+            HttpResponse::Unauthorized().finish()
+        }
     }
-
-    let json = json!({ "messages": messages });
-
-    HttpResponse::Ok().json(json)
 }
 
 #[post("/")]

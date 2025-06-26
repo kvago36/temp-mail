@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use uuid::Uuid;
+
+pub type MailId = Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Mail {
+    pub id: String,
     pub subject: String,
     pub receivers: Vec<String>,
     pub sender: String,

@@ -4,6 +4,13 @@ use uuid::Uuid;
 
 pub type MailId = Uuid;
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserSession {
+    pub mail_id: Uuid,
+    pub email: String,
+    pub created_ad: i64,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Mail {
     pub id: String,

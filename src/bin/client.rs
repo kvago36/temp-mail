@@ -47,7 +47,11 @@ async fn main() -> Result<(), MyError> {
             match res {
                 Ok(res) => {
                     if res.status() != StatusCode::OK {
-                        error!("Response failed: {}, {}", res.status(), res.text().await.unwrap());
+                        error!(
+                            "Response failed: {}, {}",
+                            res.status(),
+                            res.text().await.unwrap()
+                        );
                     } else {
                         info!("Mail delivered successfully");
                     }

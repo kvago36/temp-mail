@@ -1,38 +1,66 @@
-use actix_web::{
-    App, Error,
-    body::MessageBody,
-    cookie::Cookie,
-    dev::{ServiceRequest, ServiceResponse},
-    middleware::{Next, from_fn},
-};
+use std::future::{ready, Ready};
+use actix_session::{SessionExt};
+use actix_web::{body::EitherBody, dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform}, Error, HttpMessage, HttpResponse};
+use futures_util::future::LocalBoxFuture;
+use futures_util::{FutureExt, TryFutureExt};
 use log::info;
-use uuid::Uuid;
+use mail::models::UserSession;
 
-pub(crate) async fn my_middleware(
-    req: ServiceRequest,
-    next: Next<impl MessageBody>,
-) -> Result<ServiceResponse<impl MessageBody>, Error> {
-    // Проверяем существующую сессию
-    let has_session = req.cookie("session_id").is_some();
+pub struct RateLimit;
 
-    let mut res = next.call(req).await?;
+impl<S, B> Transform<S, ServiceRequest> for RateLimit
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<EitherBody<B>>;
+    type Error = Error;
+    type Transform = UserSessionService<S>;
+    type InitError = ();
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
-    // Если нет сессии - создаем новую
-    if !has_session {
-        let session_id = Uuid::new_v4().to_string();
-
-        info!("Created new session for {}", session_id);
-
-        let session_cookie = Cookie::build("session_id", session_id)
-            .path("/")
-            .max_age(cookie::time::Duration::hours(24))
-            .http_only(true)
-            .secure(false) // В продакшене true с HTTPS
-            .same_site(actix_web::cookie::SameSite::Lax)
-            .finish();
-
-        res.response_mut().add_cookie(&session_cookie)?;
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(UserSessionService {
+            service,
+        }))
     }
+}
 
-    Ok(res)
+pub struct UserSessionService<S> {
+    service: S,
+}
+
+impl<S, B> Service<ServiceRequest> for UserSessionService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<EitherBody<B>>;
+    type Error = Error;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let session = req.get_session();
+
+        if let Ok(Some(user_session)) = session.get::<UserSession>("user") {
+            req.extensions_mut().insert(user_session);
+
+            self.service
+                .call(req)
+                .map_ok(ServiceResponse::map_into_left_body)
+                .boxed_local()
+        } else {
+            Box::pin(async {
+                Ok(req.into_response(
+                    HttpResponse::Unauthorized()
+                        .finish()
+                        .map_into_right_body(),
+                ))
+            })
+        }
+    }
 }

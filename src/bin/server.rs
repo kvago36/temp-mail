@@ -22,8 +22,12 @@ type MailId = Uuid;
 type ChannelsMap = Arc<Mutex<HashMap<MailId, Sender<Mail>>>>;
 
 mod handlers;
+mod middlewares;
 
+use handlers::email::email_handler;
 use handlers::mail::mail_handler;
+use handlers::store::store_handler;
+
 use mail::models::Mail;
 
 struct State {
@@ -84,7 +88,12 @@ async fn main() -> std::io::Result<()> {
                     .build(),
             )
             .app_data(app_state.clone())
-            .service(web::scope("/api").configure(mail_handler::mail_config))
+            .service(
+                web::scope("/api")
+                    .configure(store_handler::store_config)
+                    .configure(mail_handler::mail_config)
+                    .configure(email_handler::email_config),
+            )
     })
     .bind(("127.0.0.1", 8000))?
     .run()

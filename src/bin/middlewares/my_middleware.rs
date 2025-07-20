@@ -1,10 +1,14 @@
-use std::future::{ready, Ready};
-use actix_session::{SessionExt};
-use actix_web::{body::EitherBody, dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform}, Error, HttpMessage, HttpResponse};
+use actix_session::SessionExt;
+use actix_web::{
+    Error, HttpMessage, HttpResponse,
+    body::EitherBody,
+    dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
+};
 use futures_util::future::LocalBoxFuture;
 use futures_util::{FutureExt, TryFutureExt};
 use log::info;
 use mail::models::UserSession;
+use std::future::{Ready, ready};
 
 pub struct RateLimit;
 
@@ -21,9 +25,7 @@ where
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(UserSessionService {
-            service,
-        }))
+        ready(Ok(UserSessionService { service }))
     }
 }
 
@@ -55,11 +57,7 @@ where
                 .boxed_local()
         } else {
             Box::pin(async {
-                Ok(req.into_response(
-                    HttpResponse::Unauthorized()
-                        .finish()
-                        .map_into_right_body(),
-                ))
+                Ok(req.into_response(HttpResponse::Unauthorized().finish().map_into_right_body()))
             })
         }
     }

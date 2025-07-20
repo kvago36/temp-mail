@@ -10,24 +10,32 @@ use uuid::Uuid;
 
 use crate::State;
 
+use mail::utils::random::generate_email_local_part;
+
 #[get("/")]
 async fn get_mail(session: Session, data: web::Data<State>) -> impl Responder {
     let pool = &data.pool;
     let mut rng = thread_rng();
-    let mut nums: Vec<i32> = (1..100).collect();
 
-    nums.shuffle(&mut rng);
-
-    let random_slug = nums.choose(&mut rng).unwrap();
-    let random_email = format!("email{}@test.com", random_slug);
+    let random_slug = generate_email_local_part();
 
     sleep(Duration::from_millis(100)).await;
 
     let domains_query = sqlx::query(include_str!("../../../sql/get_domains.sql"))
-        .bind(&random_email)
         .fetch_all(pool)
         .await
         .unwrap();
+
+    let mut domains: Vec<String> = domains_query
+        .into_iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect();
+
+    domains.shuffle(&mut rng);
+
+    let random_domain = domains.choose(&mut rng).unwrap();
+
+    let random_email = format!("{}@{}", random_slug, random_domain);
 
     let mail_query = sqlx::query(include_str!("../../../sql/save_user_email.sql"))
         .bind(&random_email)

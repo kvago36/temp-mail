@@ -1,0 +1,55 @@
+name: Build and Deploy Rust Client
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Build client binary
+      run: cargo build --release --bin client
+
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+    - name: Deploy to server
+      run: |
+        # Копируем бинарник на сервер
+        scp target/release/client ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/client
+
+        # Устанавливаем и запускаем на сервере
+        ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} '
+          # Останавливаем старый процесс если он запущен
+          pkill -f "/opt/rust-client/client" || true
+
+          # Создаем директорию если её нет
+          sudo mkdir -p /opt/rust-client
+
+          # Копируем новый бинарник
+          sudo mv /tmp/client /opt/rust-client/client
+          sudo chmod +x /opt/rust-client/client
+
+          # Запускаем с переменными окружения в фоне
+          cd /opt/rust-client
+          HOST_ADDRESS="${{ secrets.HOST_ADDRESS }}" HOST_PORT="${{ secrets.HOST_PORT }}" SERVER_ADDRESS="${{ secrets.SERVER_ADDRESS }}" SERVER_PORT="${{ secrets.SERVER_PORT }}" nohup ./client > client.log 2>&1 &
+
+          echo "Deployment completed. Process started."
+          sleep 2
+          ps aux | grep client | grep -v grep || echo "Warning: Process may not be running"
+        '

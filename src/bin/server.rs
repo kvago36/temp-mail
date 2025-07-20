@@ -3,17 +3,20 @@ use actix_session::{SessionMiddleware, storage::RedisSessionStore};
 use actix_web::{App, HttpMessage, HttpServer, cookie::Key, dev::Service as _, http::header, web};
 use dotenv::dotenv;
 use futures_util::future::FutureExt;
-use log::LevelFilter;
+use futures_util::stream::{self, StreamExt};
+use log::{LevelFilter, info};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use simple_logger::SimpleLogger;
-use sqlx::Executor;
+use sqlx::{Executor, QueryBuilder, Row};
+// use sqlx::Executor;
 use sqlx_postgres::PgPool;
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use tokio::fs::read_to_string;
 use tokio::sync::oneshot::Sender;
 use uuid::Uuid;
 
@@ -30,6 +33,75 @@ use handlers::store::store_handler;
 
 use mail::models::Mail;
 
+#[derive(Debug)]
+struct DnsEntry {
+    domain: String,
+    ip: Option<String>,
+    mx_host: Option<String>,
+    mx_priority: Option<u32>,
+}
+
+#[derive(Debug)]
+struct Domains {
+    domains: Vec<DnsEntry>,
+}
+
+impl IntoIterator for Domains {
+    type Item = DnsEntry;
+    type IntoIter = std::vec::IntoIter<DnsEntry>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.domains.into_iter()
+    }
+}
+impl Domains {
+    async fn from_file() -> Self {
+        let content = read_to_string("dnsmasq.conf").await.unwrap();
+
+        let mut addresses: HashMap<String, String> = HashMap::new();
+        let mut mx_records: Vec<(String, String, u32)> = Vec::new();
+
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with("address=") {
+                // Формат: address=/domain/ip
+                if let Some(rest) = line.strip_prefix("address=") {
+                    let parts: Vec<&str> = rest.trim_matches('/').split('/').collect();
+                    if parts.len() == 2 {
+                        let domain = parts[0].to_string();
+                        let ip = parts[1].to_string();
+                        addresses.insert(domain, ip);
+                    }
+                }
+            } else if line.starts_with("mx-host=") {
+                // Формат: mx-host=domain,mx_host,priority
+                if let Some(rest) = line.strip_prefix("mx-host=") {
+                    let parts: Vec<&str> = rest.split(',').map(|s| s.trim()).collect();
+                    if parts.len() == 3 {
+                        let domain = parts[0].to_string();
+                        let mx_host = parts[1].to_string();
+                        let priority = parts[2].parse::<u32>().unwrap_or(10);
+                        mx_records.push((domain, mx_host, priority));
+                    }
+                }
+            }
+        }
+
+        let mut results = Vec::new();
+        for (domain, mx_host, priority) in mx_records {
+            let ip = addresses.get(&mx_host).cloned();
+            results.push(DnsEntry {
+                domain,
+                ip,
+                mx_host: Some(mx_host),
+                mx_priority: Some(priority),
+            });
+        }
+
+        Domains { domains: results }
+    }
+}
+
 struct State {
     pool: PgPool,
     channels_map: ChannelsMap,
@@ -39,11 +111,14 @@ struct State {
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
+    let domains = Domains::from_file().await;
+
     SimpleLogger::new()
         .with_level(LevelFilter::Info)
         .init()
         .unwrap();
 
+    let host = env::var("SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let db_url = env::var("DB_URL").expect("Cant find DB_URL in .env");
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
 
@@ -63,6 +138,16 @@ async fn main() -> std::io::Result<()> {
     pool.execute(mailboxes_table).await.unwrap();
     pool.execute(messages_table).await.unwrap();
     pool.execute(domains_table).await.unwrap();
+
+    let mut builder = QueryBuilder::new("INSERT INTO domains (name) ");
+
+    builder.push_values(domains, |mut b, entry| {
+        b.push_bind(entry.domain);
+    });
+    builder.push(" ON CONFLICT (name) DO NOTHING");
+    builder.build().execute(&pool).await.unwrap();
+
+    info!("Batch insert done");
 
     // Secret key for session encryption
     let secret_key = Key::generate();
@@ -95,7 +180,7 @@ async fn main() -> std::io::Result<()> {
                     .configure(email_handler::email_config),
             )
     })
-    .bind(("127.0.0.1", 8000))?
+    .bind((host, 8000))?
     .run()
     .await
 }

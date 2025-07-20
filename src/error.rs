@@ -1,13 +1,10 @@
 use std::io;
 use thiserror::Error;
-// use std::path::PathBuf;
 
 #[derive(Error, Debug)]
 pub enum MyError {
     #[error("data store disconnected")]
     Disconnect(#[from] io::Error),
-    #[error("unknown data store error")]
-    TonicError(#[from] tonic::transport::Error),
     #[error("Unknown SMTP command")]
     UnknownCommand,
     #[error("Waiting for more data to complete")]

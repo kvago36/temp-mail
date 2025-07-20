@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use log::{debug, error, info, warn};
 use mailparse::body::Body;
 use mailparse::{MailHeader, ParsedMail};
@@ -6,6 +6,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::fs::File;
@@ -25,10 +26,11 @@ pub struct Payload {
     attachments: Vec<String>,
     body: Option<String>,
     message: Option<String>,
-    timestamp: i64,
 }
 
 pub struct State {
+    client_ip: SocketAddr,
+    timestamp: DateTime<Utc>,
     domain: String,
     data: bool,
     sender: Option<Email>,
@@ -37,13 +39,17 @@ pub struct State {
 }
 
 impl State {
-    pub(crate) fn new(channel: Sender<Mail>) -> Self {
+    pub(crate) fn new(channel: Sender<Mail>, client_ip: SocketAddr) -> Self {
+        let timestamp = Utc::now();
+
         State {
+            client_ip,
+            timestamp,
             channel,
             domain: "".to_owned(),
             sender: None,
             data: false,
-            recipients: vec![Email::new("email16@test.com").unwrap()],
+            recipients: vec![],
         }
     }
 
@@ -73,11 +79,6 @@ impl State {
     }
 
     pub(crate) async fn handle_data(&mut self, mail: ParsedMail<'_>) -> Result<(), MyError> {
-        let now: DateTime<Local> = Local::now();
-
-        // DEBUG:
-        self.sender = Some(Email::new("test@test.com")?);
-
         let mut p = Payload {
             subject: "".to_string(),
             from: self
@@ -88,7 +89,6 @@ impl State {
             attachments: vec![],
             body: None,
             message: None,
-            timestamp: now.timestamp(),
         };
 
         for header in mail.headers {
@@ -149,7 +149,7 @@ impl State {
 
                                     let new_folders = format!(
                                         "{}/{}",
-                                        p.timestamp.to_string(),
+                                        self.timestamp.to_string(),
                                         p.from.to_string()
                                     );
 
@@ -160,7 +160,7 @@ impl State {
                                         },
                                     )?;
 
-                                    path.push(p.timestamp.to_string());
+                                    path.push(self.timestamp.to_string());
                                     path.push(p.from.to_string());
                                     path.push(filename.to_string());
 
@@ -208,8 +208,9 @@ impl State {
             message: p.message.unwrap_or("".to_string()),
             body: p.body.unwrap_or("".to_string()),
             attachments: p.attachments,
-            timestamp: now.timestamp(),
+            timestamp: self.timestamp.timestamp(),
             domain: self.domain.clone(),
+            client_ip: self.client_ip.to_string(),
         };
 
         self.domain = "".to_owned();

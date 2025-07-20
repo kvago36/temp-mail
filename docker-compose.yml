@@ -2,7 +2,11 @@
 version: '3.9'
 
 services:
-
+  redis:
+    image: redis:7
+    restart: always
+    ports:
+      - "6379:6379"
   db:
     image: postgres
     restart: always
@@ -18,6 +22,14 @@ services:
       POSTGRES_PASSWORD: password
     ports:
       - "5432:5432"
+  dns:
+    image: jpillora/dnsmasq
+    container_name: mockdns
+    restart: always
+    ports:
+      - "53:53/udp" # DNS сервер
+    volumes:
+      - ./dnsmasq.conf:/etc/dnsmasq.conf
 
   adminer:
     image: adminer

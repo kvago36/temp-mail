@@ -1,0 +1,1 @@
+INSERT INTO domains (name) VALUES ($1) ON CONFLICT (name) DO NOTHING

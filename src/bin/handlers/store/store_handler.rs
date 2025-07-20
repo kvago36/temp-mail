@@ -1,8 +1,8 @@
-use actix_web::{post, web, HttpResponse, Responder};
+use actix_web::{HttpResponse, Responder, post, web};
 use log::{error, info, warn};
+use mail::models::Mail;
 use sqlx::{Executor, Row};
 use uuid::Uuid;
-use mail::models::Mail;
 
 use crate::State;
 
@@ -26,12 +26,16 @@ async fn add_message(mail: web::Json<Mail>, data: web::Data<State>) -> impl Resp
         let mailbox_id: Uuid = row.get("id");
 
         let query = sqlx::query(
-            "INSERT INTO messages ( mailbox_id, sender, subject, body ) VALUES ( $1, $2, $3, $4 )",
+            "INSERT INTO messages ( mailbox_id, domain, client_ip, sender, subject, message, body, attachments ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8 )",
         )
-            .bind(mailbox_id)
-            .bind(&mail.sender)
-            .bind(&mail.subject)
-            .bind(&mail.message);
+        .bind(mailbox_id)
+        .bind(&mail.domain)
+        .bind(&mail.client_ip)
+        .bind(&mail.sender)
+        .bind(&mail.subject)
+        .bind(&mail.message)
+        .bind(&mail.body)
+        .bind(&mail.attachments);
 
         let result = pool.execute(query).await.unwrap();
 
@@ -58,8 +62,5 @@ async fn add_message(mail: web::Json<Mail>, data: web::Data<State>) -> impl Resp
 }
 
 pub fn store_config(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/store")
-            .service(add_message),
-    );
+    cfg.service(web::scope("/store").service(add_message));
 }

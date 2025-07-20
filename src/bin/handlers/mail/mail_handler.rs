@@ -1,6 +1,6 @@
 use actix_session::Session;
 use actix_web::cookie::Cookie;
-use actix_web::{HttpRequest, HttpResponse, Responder, get, post, web, HttpMessage};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, get, post, web};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use rand::prelude::*;
@@ -16,17 +16,16 @@ use mail::models::{Mail, MailboxStatus, UserSession};
 
 use crate::{ChannelsMap, MailId, State};
 
-use crate::middlewares::my_middleware::{RateLimit};
+use crate::middlewares::my_middleware::RateLimit;
 
 #[get("/")]
-async fn get_messages(
-    req: HttpRequest,
-    data: web::Data<State>,
-) -> impl Responder {
+async fn get_messages(req: HttpRequest, data: web::Data<State>) -> impl Responder {
     let pool = &data.pool;
     let mut messages: Vec<Mail> = vec![];
     let extensions = req.extensions();
-    let user_session = extensions.get::<UserSession>().expect("Should have session from middleware");
+    let user_session = extensions
+        .get::<UserSession>()
+        .expect("Should have session from middleware");
 
     let rows = sqlx::query(include_str!("../../../sql/get_messages.sql"))
         .bind(user_session.mail_id)
@@ -51,6 +50,7 @@ async fn get_messages(
             body: "test_body".to_string(),
             attachments: vec![],
             domain: "test".to_string(),
+            client_ip: "test".to_string(),
         });
     }
 
@@ -122,7 +122,8 @@ async fn await_for_new_mail(session: Session, data: web::Data<State>) -> impl Re
 
 pub fn mail_config(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/mail").wrap(RateLimit)
+        web::scope("/mail")
+            .wrap(RateLimit)
             .service(await_for_new_mail)
             .service(get_messages),
     );

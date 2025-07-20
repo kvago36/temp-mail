@@ -1,4 +1,3 @@
-use dotenv::dotenv;
 use log::{LevelFilter, error, info, warn};
 use mailparse::parse_mail;
 use reqwest;
@@ -12,6 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use chrono::{Utc};
 
 mod client_modules;
 
@@ -23,23 +23,29 @@ use mail::models::Mail;
 
 #[tokio::main]
 async fn main() -> Result<(), MyError> {
-    dotenv().ok();
-
     SimpleLogger::new()
         .with_level(LevelFilter::Info)
         .init()
         .unwrap();
 
-    let listener = TcpListener::bind("localhost:4000").await?;
+    let host = env::var("HOST_ADDRESS").unwrap_or_else(|_| "localhost".into());
+    let host_port = env::var("HOST_PORT").unwrap_or_else(|_| "4000".into());
+    let server = env::var("SERVER_ADDRESS").unwrap_or_else(|_| "localhost".into());
+    let server_port = env::var("SERVER_PORT").unwrap_or_else(|_| "8000".into());
+
+    let listener = TcpListener::bind(format!("{}:{}", &host, &host_port)).await?;
 
     let (tx, mut rx) = mpsc::channel::<Mail>(32);
 
     tokio::spawn(async move {
         let client = reqwest::Client::new();
+        let url = format!("http://{}:{}/api/store/", &server, &server_port);
+
+        info!("Sending to host: {}", &url);
 
         while let Some(mail) = rx.recv().await {
             let res = client
-                .post("http://localhost:8000/api/mail/")
+                .post(&url)
                 .json(&mail)
                 .send()
                 .await;
@@ -64,13 +70,13 @@ async fn main() -> Result<(), MyError> {
     });
 
     loop {
-        let (mut socket, _) = listener.accept().await?;
-        let mut state = State::new(tx.clone());
+        let (mut socket, client_addr) = listener.accept().await?;
+        let mut state = State::new(tx.clone(), client_addr);
 
         info!("New connection: {}", socket.peer_addr()?);
 
         socket
-            .write_all(b"220 smtp.example.com ESMTP ready\r\n")
+            .write_all(b"220 mail.temp.local\r\n")
             .await
             .unwrap();
 
@@ -101,7 +107,15 @@ async fn main() -> Result<(), MyError> {
                     Ok(r) => match r {
                         Request::Hello(domain) => {
                             state.add_domain(domain);
-                            socket.write_all(b"250 Ok\r\n").await.unwrap();
+                            // TODO send supported features
+                            // socket.write_all(b"250 mail.temp.local\r\n").await.unwrap();
+
+                            socket.write_all(b"250-mail.temp.local\r\n").await.unwrap();
+                            socket.write_all(b"250-PIPELINING\r\n").await.unwrap();
+                            socket.write_all(b"250-SIZE 10485760\r\n").await.unwrap();
+                            socket.write_all(b"250-8BITMIME\r\n").await.unwrap();
+                            // socket.write_all(b"250-ENHANCEDSTATUSCODES\r\n").await.unwrap();
+                            socket.write_all(b"250 SMTPUTF8\r\n").await.unwrap();
                         }
                         Request::Mail(sender) => {
                             state.add_sender(sender);
@@ -112,6 +126,7 @@ async fn main() -> Result<(), MyError> {
                             socket.write_all(b"250 Ok\r\n").await.unwrap();
                         }
                         Request::Recipient(recipient) => {
+                            // TODO check if recipient valid
                             state.add_recipient(recipient);
                             socket.write_all(b"250 Ok\r\n").await.unwrap();
                         }

@@ -22,6 +22,7 @@ pub struct Mail {
     pub body: String,
     pub attachments: Vec<String>,
     pub domain: String,
+    pub client_ip: String,
 }
 
 #[derive(sqlx::Type)]

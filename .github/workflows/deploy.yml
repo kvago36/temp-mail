@@ -27,7 +27,11 @@ jobs:
         mkdir -p ~/.ssh
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
+        chmod 700 ~/.ssh
         ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+        
+        # Проверяем ключ
+        ssh-keygen -l -f ~/.ssh/id_rsa || echo "Invalid SSH key format"
 
     - name: Deploy to server
       run: |

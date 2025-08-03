@@ -8,53 +8,113 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: test
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
+      
     - name: Install Rust
       uses: actions-rs/toolchain@v1
       with:
         toolchain: nightly
         override: true
-
+        
     - name: Build client binary
       run: cargo build --release --bin client
-
-    - name: Setup SSH
+      
+    - name: Setup SSH with debugging
       run: |
         mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        
+        # Сохраняем ключ
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
-        chmod 700 ~/.ssh
+        
+        # Отладочная информация
+        echo "SSH key info:"
+        ssh-keygen -l -f ~/.ssh/id_rsa || echo "ERROR: Invalid SSH key format"
+        
+        # Проверяем формат ключа
+        head -n 1 ~/.ssh/id_rsa
+        
+        # Добавляем хост в known_hosts
         ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
         
-        # Проверяем ключ
-        ssh-keygen -l -f ~/.ssh/id_rsa || echo "Invalid SSH key format"
-
+        # Тестируем подключение
+        echo "Testing SSH connection..."
+        ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            'echo "SSH connection successful"' || echo "SSH connection failed"
+    
     - name: Deploy to server
       run: |
-        # Копируем бинарник на сервер
-        scp target/release/client ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/client
-
+        echo "Starting deployment..."
+        
+        # Копируем бинарник на сервер с отладкой
+        echo "Copying binary to server..."
+        scp -v -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+            target/release/client \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/client
+        
         # Устанавливаем и запускаем на сервере
-        ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} '
-          # Останавливаем старый процесс если он запущен
+        echo "Installing and starting service..."
+        ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} '
+          set -e
+          
+          echo "Stopping old process..."
           pkill -f "/opt/rust-client/client" || true
-
-          # Создаем директорию если её нет
+          sleep 2
+          
+          echo "Setting up directories..."
           sudo mkdir -p /opt/rust-client
-
-          # Копируем новый бинарник
+          
+          echo "Installing new binary..."
           sudo mv /tmp/client /opt/rust-client/client
           sudo chmod +x /opt/rust-client/client
-
-          # Запускаем с переменными окружения в фоне
+          
+          echo "Starting new process..."
           cd /opt/rust-client
-          HOST_ADDRESS="${{ secrets.HOST_ADDRESS }}" HOST_PORT="${{ secrets.HOST_PORT }}" SERVER_ADDRESS="${{ secrets.SERVER_ADDRESS }}" SERVER_PORT="${{ secrets.SERVER_PORT }}" nohup ./client > client.log 2>&1 &
-
+          
+          # Создаем systemd service (опционально)
+          # sudo tee /etc/systemd/system/rust-client.service > /dev/null << EOF
+          # [Unit]
+          # Description=Rust Client Service
+          # After=network.target
+          # 
+          # [Service]
+          # Type=simple
+          # User=nobody
+          # WorkingDirectory=/opt/rust-client
+          # Environment=HOST_ADDRESS=${{ secrets.HOST_ADDRESS }}
+          # Environment=HOST_PORT=${{ secrets.HOST_PORT }}
+          # Environment=SERVER_ADDRESS=${{ secrets.SERVER_ADDRESS }}
+          # Environment=SERVER_PORT=${{ secrets.SERVER_PORT }}
+          # ExecStart=/opt/rust-client/client
+          # Restart=always
+          # RestartSec=3
+          # 
+          # [Install]
+          # WantedBy=multi-user.target
+          # EOF
+          # 
+          # sudo systemctl daemon-reload
+          # sudo systemctl enable rust-client
+          # sudo systemctl start rust-client
+          
+          # Альтернативно: запуск через nohup
+          HOST_ADDRESS="${{ secrets.HOST_ADDRESS }}" \
+          HOST_PORT="${{ secrets.HOST_PORT }}" \
+          SERVER_ADDRESS="${{ secrets.SERVER_ADDRESS }}" \
+          SERVER_PORT="${{ secrets.SERVER_PORT }}" \
+          nohup ./client > client.log 2>&1 &
+          
           echo "Deployment completed. Process started."
-          sleep 2
+          sleep 3
+          
+          echo "Checking process status..."
           ps aux | grep client | grep -v grep || echo "Warning: Process may not be running"
+          
+          echo "Recent log entries:"
+          tail -n 10 client.log || echo "No log file found"
         '

@@ -22,21 +22,13 @@ jobs:
       run: cargo build --release --bin client
       
     - name: Setup SSH with debugging
-      env:
-        SSH_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}  # Импорт фразы-пароля
       run: |
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # Сохраняем ключ с обработкой фразы-пароля
+        # Сохраняем ключ
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
-        
-        # Если ключ защищён фразой - разблокируем его
-        if [ -n "$SSH_PASSPHRASE" ]; then
-          echo "Key is passphrase-protected, unlocking..."
-          ssh-keygen -p -P "$SSH_PASSPHRASE" -N "" -f ~/.ssh/id_rsa || echo "Warning: Passphrase may be incorrect"
-        fi
         
         # Отладочная информация
         echo "SSH key info:"
@@ -55,19 +47,11 @@ jobs:
             'echo "SSH connection successful"' || echo "SSH connection failed"
     
     - name: Deploy to server
-      env:
-        SSH_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}  # Повторно используем фразу
       run: |
         echo "Starting deployment..."
         
         # Копируем бинарник на сервер с отладкой
         echo "Copying binary to server..."
-        if [ -n "$SSH_PASSPHRASE" ]; then
-          # Если есть фраза - используем ssh-agent
-          eval $(ssh-agent -s)
-          ssh-add ~/.ssh/id_rsa <<< "$SSH_PASSPHRASE"
-        fi
-        
         scp -v -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
             target/release/client \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/client
@@ -92,6 +76,33 @@ jobs:
           echo "Starting new process..."
           cd /opt/rust-client
           
+          # Создаем systemd service (опционально)
+          # sudo tee /etc/systemd/system/rust-client.service > /dev/null << EOF
+          # [Unit]
+          # Description=Rust Client Service
+          # After=network.target
+          # 
+          # [Service]
+          # Type=simple
+          # User=nobody
+          # WorkingDirectory=/opt/rust-client
+          # Environment=HOST_ADDRESS=${{ secrets.HOST_ADDRESS }}
+          # Environment=HOST_PORT=${{ secrets.HOST_PORT }}
+          # Environment=SERVER_ADDRESS=${{ secrets.SERVER_ADDRESS }}
+          # Environment=SERVER_PORT=${{ secrets.SERVER_PORT }}
+          # ExecStart=/opt/rust-client/client
+          # Restart=always
+          # RestartSec=3
+          # 
+          # [Install]
+          # WantedBy=multi-user.target
+          # EOF
+          # 
+          # sudo systemctl daemon-reload
+          # sudo systemctl enable rust-client
+          # sudo systemctl start rust-client
+          
+          # Альтернативно: запуск через nohup
           HOST_ADDRESS="${{ secrets.HOST_ADDRESS }}" \
           HOST_PORT="${{ secrets.HOST_PORT }}" \
           SERVER_ADDRESS="${{ secrets.SERVER_ADDRESS }}" \

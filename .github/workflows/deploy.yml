@@ -1,32 +1,64 @@
-- name: Deploy to server
-  run: |
-    # Копируем бинарник
-    scp -o StrictHostKeyChecking=no \
-        target/release/client \
-        ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/client_new
+name: Build and Deploy Rust Client
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
-    # Останавливаем, удаляем старый и запускаем новый
-    ssh -o StrictHostKeyChecking=no \
-        ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} '
-        # Останавливаем старый процесс
-        pkill -f "~/rust-app/client" || true
-        sleep 1
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        override: true
         
-        # Удаляем старый файл
-        rm -f ~/rust-app/client
+    - name: Build client binary
+      run: cargo build --release --bin client
+      
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
         
-        # Перемещаем новый
-        mkdir -p ~/rust-app
-        mv /tmp/client_new ~/rust-app/client
-        chmod +x ~/rust-app/client
-        
-        # Запускаем
-        cd ~/rust-app
-        HOST_ADDRESS="${{ secrets.HOST_ADDRESS }}" \
-        HOST_PORT="${{ secrets.HOST_PORT }}" \
-        SERVER_ADDRESS="${{ secrets.SERVER_ADDRESS }}" \
-        SERVER_PORT="${{ secrets.SERVER_PORT }}" \
-        nohup ./client > app.log 2>&1 &
-        
-        echo "✅ App restarted successfully"
+    - name: Deploy to server
+      run: |
+        # Копируем новый бинарник
+        scp -o StrictHostKeyChecking=no \
+            target/release/client \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/client_new
+
+        # Останавливаем старую версию и запускаем новую
+        ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} '
+            # Останавливаем процесс
+            pkill -f "~/rust-app/client" || true
+            sleep 1
+            
+            # Удаляем старый файл
+            rm -f ~/rust-app/client
+            
+            # Создаем директорию и перемещаем новый бинарник
+            mkdir -p ~/rust-app
+            mv /tmp/client_new ~/rust-app/client
+            chmod +x ~/rust-app/client
+            
+            # Запускаем с переменными окружения
+            cd ~/rust-app
+            HOST_ADDRESS="${{ secrets.HOST_ADDRESS }}" \
+            HOST_PORT="${{ secrets.HOST_PORT }}" \
+            SERVER_ADDRESS="${{ secrets.SERVER_ADDRESS }}" \
+            SERVER_PORT="${{ secrets.SERVER_PORT }}" \
+            nohup ./client > app.log 2>&1 &
+            
+            echo "✅ Deployment successful"
+            echo "Process ID: $(pgrep -f "./client")"
+            echo "Logs: tail -f ~/rust-app/app.log"
         '

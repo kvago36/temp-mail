@@ -1,12 +1,13 @@
 use log::{LevelFilter, error, info, warn};
 use mailparse::parse_mail;
+use clap::Parser;
 use reqwest;
-use reqwest::{Response, StatusCode};
+use reqwest::{Response, StatusCode, Url};
 use serde_json::json;
 use simple_logger::SimpleLogger;
 use sqlx::{Executor, Row};
 use sqlx_postgres::PgPool;
-use std::env;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -17,6 +18,7 @@ mod client_modules;
 
 use client_modules::request::Request;
 use client_modules::state::State;
+use client_modules::config::Args;
 
 use mail::error::MyError;
 use mail::models::Mail;
@@ -28,24 +30,28 @@ async fn main() -> Result<(), MyError> {
         .init()
         .unwrap();
 
-    let host = env::var("HOST_ADDRESS").unwrap_or_else(|_| "localhost".into());
-    let host_port = env::var("HOST_PORT").unwrap_or_else(|_| "4000".into());
-    let server = env::var("SERVER_ADDRESS").unwrap_or_else(|_| "localhost".into());
-    let server_port = env::var("SERVER_PORT").unwrap_or_else(|_| "8000".into());
+    let args = Args::parse();
 
-    let listener = TcpListener::bind(format!("{}:{}", &host, &host_port)).await?;
+    warn!("Loaded args: {:?}", args);
+
+    let ip_from_str = args.host.parse().unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
+    let socket = SocketAddr::new(IpAddr::V4(ip_from_str), args.port);
+
+    let listener = TcpListener::bind(socket).await?;
 
     let (tx, mut rx) = mpsc::channel::<Mail>(32);
 
     tokio::spawn(async move {
         let client = reqwest::Client::new();
-        let url = format!("http://{}:{}/api/store/", &server, &server_port);
-
-        info!("Sending to host: {}", &url);
+        let server_ip_from_str = args.server.parse().unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
+        let server_addr = SocketAddr::new(IpAddr::V4(server_ip_from_str), args.server_port);
+        let url = Url::parse(&format!("http://{}/api/store/", server_addr)).unwrap();
 
         while let Some(mail) = rx.recv().await {
+            info!("Sending to host: {}", &server_addr);
+
             let res = client
-                .post(&url)
+                .post(url.clone())
                 .json(&mail)
                 .send()
                 .await;

@@ -1,7 +1,6 @@
 use actix_cors::Cors;
 use actix_session::{SessionMiddleware, storage::RedisSessionStore};
 use actix_web::{App, HttpMessage, HttpServer, cookie::Key, dev::Service as _, http::header, web};
-use dotenv::dotenv;
 use futures_util::future::FutureExt;
 use futures_util::stream::{self, StreamExt};
 use log::{LevelFilter, info};
@@ -9,11 +8,11 @@ use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use simple_logger::SimpleLogger;
 use sqlx::{Executor, QueryBuilder, Row};
-// use sqlx::Executor;
+use clap::Parser;
 use sqlx_postgres::PgPool;
 use std::collections::HashMap;
-use std::env;
 use std::error::Error;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tokio::fs::read_to_string;
@@ -26,10 +25,13 @@ type ChannelsMap = Arc<Mutex<HashMap<MailId, Sender<Mail>>>>;
 
 mod handlers;
 mod middlewares;
+mod config;
 
 use handlers::email::email_handler;
 use handlers::mail::mail_handler;
 use handlers::store::store_handler;
+
+use config::config::Args;
 
 use mail::models::Mail;
 
@@ -109,25 +111,23 @@ struct State {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    dotenv().ok();
-
-    let domains = Domains::from_file().await;
+    let args = Args::parse();
 
     SimpleLogger::new()
         .with_level(LevelFilter::Info)
         .init()
         .unwrap();
 
-    let host = env::var("SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let db_url = env::var("DB_URL").expect("Cant find DB_URL in .env");
-    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let domains = Domains::from_file().await;
 
-    // Create Redis session store
-    let redis_store = RedisSessionStore::new(redis_url)
+    let ip_from_str = args.host.parse().unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
+    let socket = SocketAddr::new(IpAddr::V4(ip_from_str), args.port);
+
+    let redis_store = RedisSessionStore::new(&args.redis_url)
         .await
         .expect("Failed to create Redis session store");
 
-    let pool = PgPool::connect(&db_url).await.unwrap();
+    let pool = PgPool::connect(&args.db_url).await.unwrap();
 
     // let mailboxes_type = sqlx::query(include_str!("../sql/create_mailbox_status_type.sql"));
     let mailboxes_table = sqlx::query(include_str!("../sql/create_mailboxes_table.sql"));
@@ -180,7 +180,7 @@ async fn main() -> std::io::Result<()> {
                     .configure(email_handler::email_config),
             )
     })
-    .bind((host, 8000))?
+    .bind(socket)?
     .run()
     .await
 }

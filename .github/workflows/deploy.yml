@@ -53,13 +53,7 @@ jobs:
         ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} '
           # Создаем временную директорию в домашней папке если /tmp недоступна
           mkdir -p ~/deploy_temp
-          
-          # Останавливаем старые процессы
-          echo "Stopping old processes..."
-          pkill -f "/opt/rust-client/client" || echo "No old client process found"
-          pkill -f "/opt/rust-server/server" || echo "No old server process found"
-          sleep 2
-          
+                    
           # Создаем целевые директории
           sudo mkdir -p /opt/rust-client
           sudo mkdir -p /opt/rust-server

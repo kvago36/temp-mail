@@ -16,6 +16,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::path::Path;
+use sqlx::sqlx_macros::migrate;
 use tokio::fs::read_to_string;
 use tokio::sync::oneshot::Sender;
 use uuid::Uuid;
@@ -128,10 +129,6 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to create Redis session store");
 
-    #[cfg(debug_assertions)]
-    let migrator = Migrator::new(Path::new("migrations")).await.unwrap();
-
-    #[cfg(not(debug_assertions))]
     let migrator = migrate!("./migrations");
 
     let pool = PgPool::connect(&args.db_url).await.unwrap();
@@ -177,7 +174,7 @@ async fn main() -> std::io::Result<()> {
                     .configure(email_handler::email_config),
             )
     })
-    .bind(socket)?
-    .run()
-    .await
+        .bind(socket)?
+        .run()
+        .await
 }

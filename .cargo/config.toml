@@ -7,3 +7,9 @@ linker = "aarch64-linux-gnu-gcc"
 
 [profile.pi-release]
 inherits = "release"
+
+[env]
+HOST = "localhost"
+PORT = "8001"
+DB_URL = "postgresql://postgres:password@109.172.90.43:5432/postgres"
+REDIS_URL = "redis://109.172.90.43:6379"

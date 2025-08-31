@@ -1,6 +1,7 @@
+use chrono::Utc;
+use clap::Parser;
 use log::{LevelFilter, error, info, warn};
 use mailparse::parse_mail;
-use clap::Parser;
 use reqwest;
 use reqwest::{Response, StatusCode, Url};
 use serde_json::json;
@@ -12,13 +13,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use chrono::{Utc};
 
 mod client_modules;
 
+use client_modules::config::Args;
 use client_modules::request::Request;
 use client_modules::state::State;
-use client_modules::config::Args;
 
 use mail::error::MyError;
 use mail::models::Mail;
@@ -50,11 +50,7 @@ async fn main() -> Result<(), MyError> {
         while let Some(mail) = rx.recv().await {
             info!("Sending to host: {}", &server_addr);
 
-            let res = client
-                .post(url.clone())
-                .json(&mail)
-                .send()
-                .await;
+            let res = client.post(url.clone()).json(&mail).send().await;
 
             match res {
                 Ok(res) => {
@@ -81,10 +77,7 @@ async fn main() -> Result<(), MyError> {
 
         info!("New connection: {}", socket.peer_addr()?);
 
-        socket
-            .write_all(b"220 mail.temp.local\r\n")
-            .await
-            .unwrap();
+        socket.write_all(b"220 mail.temp.local\r\n").await.unwrap();
 
         let mut buf = [0; 4096];
 

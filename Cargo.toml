@@ -20,7 +20,7 @@ regex = "1.11.1"
 chrono = "0.4.39"
 thiserror = "2.0.12"
 mailparse = "0.16.1"
-sqlx = { version = "0.8.3", features = ["runtime-tokio", "uuid", "chrono", "postgres"] }
+sqlx = { version = "0.8.3", features = ["runtime-tokio", "uuid", "chrono", "postgres", "migrate"] }
 sqlx-postgres = "0.8.3"
 uuid = { version = "1.16.0", features = ["serde", "v4"] }
 rand = "0.8.5"
@@ -33,8 +33,13 @@ cookie = "0.18.1"
 futures-util = "0.3.31"
 reqwest = { version = "0.12.20", default-features = false, features = ["rustls-tls", "json"] }
 actix-session = { version = "0.10.1", features = ["redis-session"] }
-clap = { version = "4.5.46", features = ["derive"] }
+clap = { version = "4.5.46", features = ["derive", "env"] }
 
 [profile.pi-release]
 target = "aarch64-unknown-linux-gnu"  # Автоматически применяется
 inherits = "release"
+
+[profile.debug-vps]
+opt-level = 1
+debug = true
+inherits = "dev"  # Наследуем настройки от dev профиля

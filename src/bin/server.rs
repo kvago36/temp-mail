@@ -1,20 +1,21 @@
 use actix_cors::Cors;
 use actix_session::{SessionMiddleware, storage::RedisSessionStore};
 use actix_web::{App, HttpMessage, HttpServer, cookie::Key, dev::Service as _, http::header, web};
+use clap::Parser;
 use futures_util::future::FutureExt;
 use futures_util::stream::{self, StreamExt};
 use log::{LevelFilter, info};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use simple_logger::SimpleLogger;
-use sqlx::{Executor, QueryBuilder, Row};
-use clap::Parser;
+use sqlx::{Executor, QueryBuilder, Row, migrate::Migrator};
 use sqlx_postgres::PgPool;
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::path::Path;
 use tokio::fs::read_to_string;
 use tokio::sync::oneshot::Sender;
 use uuid::Uuid;
@@ -23,9 +24,9 @@ type MailId = Uuid;
 
 type ChannelsMap = Arc<Mutex<HashMap<MailId, Sender<Mail>>>>;
 
+mod config;
 mod handlers;
 mod middlewares;
-mod config;
 
 use handlers::email::email_handler;
 use handlers::mail::mail_handler;
@@ -127,17 +128,11 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to create Redis session store");
 
+    let migrator = Migrator::new(Path::new("migrations")).await.unwrap();
+
     let pool = PgPool::connect(&args.db_url).await.unwrap();
 
-    // let mailboxes_type = sqlx::query(include_str!("../sql/create_mailbox_status_type.sql"));
-    let mailboxes_table = sqlx::query(include_str!("../sql/create_mailboxes_table.sql"));
-    let messages_table = sqlx::query(include_str!("../sql/create_messages_table.sql"));
-    let domains_table = sqlx::query(include_str!("../sql/create_domains_table.sql"));
-
-    // pool.execute(mailboxes_type).await.unwrap();
-    pool.execute(mailboxes_table).await.unwrap();
-    pool.execute(messages_table).await.unwrap();
-    pool.execute(domains_table).await.unwrap();
+    migrator.run(&pool).await.unwrap();
 
     let mut builder = QueryBuilder::new("INSERT INTO domains (name) ");
 
@@ -146,8 +141,6 @@ async fn main() -> std::io::Result<()> {
     });
     builder.push(" ON CONFLICT (name) DO NOTHING");
     builder.build().execute(&pool).await.unwrap();
-
-    info!("Batch insert done");
 
     // Secret key for session encryption
     let secret_key = Key::generate();

@@ -1,4 +1,4 @@
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{Rng, distributions::Alphanumeric};
 
 /// Генерирует валидную строку email (до @)
 pub fn generate_email_local_part() -> String {

@@ -4,7 +4,7 @@ from email.utils import make_msgid
 import base64
 
 # === Настройки ===
-SMTP_SERVER = "192.168.0.118"
+SMTP_SERVER = "127.0.0.1"
 SMTP_PORT = 4000
 SENDER = "test@example.com"
 RECIPIENT = "email22@test.com"

@@ -75,3 +75,4 @@ jobs:
           echo "=== Server binary ==="
           ls -la ~/deploy_temp/server
           file ~/deploy_temp/server
+        '

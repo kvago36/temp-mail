@@ -36,10 +36,16 @@ actix-session = { version = "0.10.1", features = ["redis-session"] }
 clap = { version = "4.5.46", features = ["derive", "env"] }
 
 [profile.pi-release]
-target = "aarch64-unknown-linux-gnu"  # Автоматически применяется
+target = "aarch64-unknown-linux-gnu"
 inherits = "release"
 
 [profile.debug-vps]
 opt-level = 1
 debug = true
-inherits = "dev"  # Наследуем настройки от dev профиля
+target = "x86_64-unknown-linux-gnu"
+inherits = "dev"
+
+[profile.vps]
+opt-level = 1
+debug = false
+inherits = "release"

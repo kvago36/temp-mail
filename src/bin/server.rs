@@ -128,7 +128,11 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to create Redis session store");
 
+    #[cfg(debug_assertions)]
     let migrator = Migrator::new(Path::new("migrations")).await.unwrap();
+
+    #[cfg(not(debug_assertions))]
+    let migrator = migrate!("./migrations");
 
     let pool = PgPool::connect(&args.db_url).await.unwrap();
 

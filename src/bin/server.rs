@@ -155,7 +155,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(
                 Cors::default()
-                    .allowed_origin("http://localhost:5173")
+                    .allowed_origin(&args.frontend_origin)
                     .supports_credentials()
                     .allowed_methods(vec!["GET", "POST"])
                     .allowed_header(header::CONTENT_TYPE)

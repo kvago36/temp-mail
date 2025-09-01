@@ -22,4 +22,8 @@ pub struct Args {
     /// Redis url, default redis://127.0.0.1:6379
     #[arg(long, env = "REDIS_URL", default_value = "redis://127.0.0.1:6379")]
     pub redis_url: String,
+
+    /// Frontend origin, default http://localhost:5173
+    #[arg(long, env = "FRONTEND_ORIGIN", default_value = "http://localhost:5173")]
+    pub frontend_origin: String,
 }

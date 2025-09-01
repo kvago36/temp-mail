@@ -1,7 +1,7 @@
 name: Build and Deploy Rust Client and Server
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 jobs:
   deploy:

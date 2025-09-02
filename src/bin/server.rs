@@ -145,6 +145,7 @@ async fn main() -> std::io::Result<()> {
 
     // Secret key for session encryption
     let secret_key = Key::generate();
+    let is_prod = !cfg!(debug_assertions); // true в release, false в debug
 
     let channels_map = Arc::new(Mutex::new(HashMap::new()));
     let state = State { pool, channels_map };
@@ -163,7 +164,7 @@ async fn main() -> std::io::Result<()> {
             )
             .wrap(
                 SessionMiddleware::builder(redis_store.clone(), secret_key.clone())
-                    .cookie_secure(false) // Set to true in production
+                    .cookie_secure(is_prod) // Set to true in production
                     .build(),
             )
             .app_data(app_state.clone())

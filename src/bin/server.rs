@@ -115,8 +115,16 @@ struct State {
 async fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
+    let level = match args.log_level.as_str() {
+        "debug" => LevelFilter::Debug,
+        "info" => LevelFilter::Info,
+        "warn" => LevelFilter::Warn,
+        "error" => LevelFilter::Error,
+        _ => LevelFilter::Info,
+    };
+
     SimpleLogger::new()
-        .with_level(LevelFilter::Info)
+        .with_level(level)
         .init()
         .unwrap();
 
@@ -145,14 +153,11 @@ async fn main() -> std::io::Result<()> {
 
     // Secret key for session encryption
     let secret_key = Key::generate();
-    let is_prod = !cfg!(debug_assertions); // true в release, false в debug
 
     let channels_map = Arc::new(Mutex::new(HashMap::new()));
     let state = State { pool, channels_map };
 
     let app_state = web::Data::new(state);
-
-    println!("is_prod: {}, origin: {}", is_prod, &args.frontend_origin);
 
     HttpServer::new(move || {
         App::new()
@@ -166,7 +171,7 @@ async fn main() -> std::io::Result<()> {
             )
             .wrap(
                 SessionMiddleware::builder(redis_store.clone(), secret_key.clone())
-                    .cookie_secure(is_prod) // Set to true in production
+                    .cookie_secure(false) // Set to true in production
                     .build(),
             )
             .app_data(app_state.clone())

@@ -26,4 +26,8 @@ pub struct Args {
     /// Frontend origin, default http://localhost:5173
     #[arg(long, env = "FRONTEND_ORIGIN", default_value = "http://localhost:5173")]
     pub frontend_origin: String,
+
+    /// Log level: debug, info, warn, error
+    #[arg(long, env = "LOG_LEVEL", default_value = "info")]
+    pub log_level: String,
 }

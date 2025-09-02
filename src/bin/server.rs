@@ -152,6 +152,8 @@ async fn main() -> std::io::Result<()> {
 
     let app_state = web::Data::new(state);
 
+    println!("is_prod: {}, origin: {}", is_prod, &args.frontend_origin);
+
     HttpServer::new(move || {
         App::new()
             .wrap(

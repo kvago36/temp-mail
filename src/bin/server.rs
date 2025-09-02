@@ -1,6 +1,6 @@
 use actix_cors::Cors;
 use actix_session::{SessionMiddleware, storage::RedisSessionStore};
-use actix_web::{App, HttpMessage, HttpServer, cookie::Key, dev::Service as _, http::header, web};
+use actix_web::{App, HttpMessage, HttpServer, cookie::Key, cookie::SameSite, dev::Service as _, http::header, web};
 use clap::Parser;
 use futures_util::future::FutureExt;
 use futures_util::stream::{self, StreamExt};
@@ -171,7 +171,8 @@ async fn main() -> std::io::Result<()> {
             )
             .wrap(
                 SessionMiddleware::builder(redis_store.clone(), secret_key.clone())
-                    .cookie_secure(false) // Set to true in production
+                    .cookie_same_site(SameSite::None)
+                    .cookie_secure(true) // Set to true in production
                     .build(),
             )
             .app_data(app_state.clone())

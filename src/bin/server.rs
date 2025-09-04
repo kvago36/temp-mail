@@ -1,5 +1,6 @@
 use actix_cors::Cors;
 use actix_session::{SessionMiddleware, storage::RedisSessionStore};
+use actix_web::middleware::Logger;
 use actix_web::{App, HttpMessage, HttpServer, cookie::Key, cookie::SameSite, dev::Service as _, http::header, web};
 use clap::Parser;
 use futures_util::future::FutureExt;
@@ -161,6 +162,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .wrap(Logger::default())
             .wrap(
                 Cors::default()
                     .allowed_origin(&args.frontend_origin)

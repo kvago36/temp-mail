@@ -54,9 +54,8 @@ jobs:
           # Создаем временную директорию в домашней папке если /tmp недоступна
           mkdir -p ~/deploy_temp
                     
-          # Создаем целевые директории
-          sudo mkdir -p /opt/rust-client
-          sudo mkdir -p /opt/rust-server
+          # Создаем целевую директорию
+          sudo mkdir -p /opt/tempmail
           echo "Remote environment prepared"
         '
         
